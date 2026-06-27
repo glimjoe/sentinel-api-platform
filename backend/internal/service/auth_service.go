@@ -17,19 +17,27 @@ import (
 	"github.com/glimjoe/sentinel-api-platform/internal/pkg/id"
 	"github.com/glimjoe/sentinel-api-platform/internal/pkg/jwt"
 	"github.com/glimjoe/sentinel-api-platform/internal/pkg/password"
-	"github.com/glimjoe/sentinel-api-platform/internal/repository"
 )
+
+// userStore is the persistence contract AuthService needs from a User repo.
+// Defined here (not in repository) so tests can supply a fake without
+// dragging *gorm.DB into the service test file.
+type userStore interface {
+	Create(ctx context.Context, u *model.User) error
+	FindByEmail(ctx context.Context, email string) (*model.User, error)
+	FindByID(ctx context.Context, id string) (*model.User, error)
+}
 
 // AuthService is the entry point for authentication business logic.
 type AuthService struct {
-	users        *repository.UserRepo
+	users        userStore
 	accessSecret string
 	accessTTL    time.Duration
 	bcryptCost   int
 }
 
 // NewAuthService wires an AuthService. Caller owns the lifetime.
-func NewAuthService(users *repository.UserRepo, accessSecret string, accessTTL time.Duration, bcryptCost int) *AuthService {
+func NewAuthService(users userStore, accessSecret string, accessTTL time.Duration, bcryptCost int) *AuthService {
 	return &AuthService{
 		users:        users,
 		accessSecret: accessSecret,
