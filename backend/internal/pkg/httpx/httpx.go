@@ -2,8 +2,8 @@
 //
 // All HTTP handlers respond through OK() or Fail() so clients see a stable
 // shape: { code, message, data, request_id }. The request_id is propagated
-// from middleware.GetRequestID so logs and clients can correlate a failure
-// to its access-log line.
+// from the gin context (placed there by middleware.RequestID) so logs and
+// clients can correlate a failure to its access-log line.
 //
 // Convention:
 //   - OK = success; code is 0, message is "ok", data carries the payload.
@@ -14,12 +14,16 @@
 // Why envelope: the previous (Phase 1) handlers returned ad-hoc gin.H{"error": ...}
 // bodies, which forced the frontend to branch on shape. One unified shape means
 // one response interceptor on the client.
+//
+// Why requestIDFromContext is inlined rather than imported from middleware:
+// middleware/ will import this package (RBAC middleware writes through
+// httpx.Fail). If httpx imported middleware in return, the two packages would
+// form an import cycle. The helper is one line so duplication is cheaper than
+// a third package for it.
 package httpx
 
 import (
 	"github.com/gin-gonic/gin"
-
-	"github.com/glimjoe/sentinel-api-platform/internal/middleware"
 )
 
 // Envelope is the wire contract every Sentinel API response conforms to.
@@ -39,7 +43,7 @@ func OK(c *gin.Context, data any) {
 		Code:      0,
 		Message:   "ok",
 		Data:      data,
-		RequestID: middleware.GetRequestID(c),
+		RequestID: requestIDFromContext(c),
 	})
 }
 
@@ -49,6 +53,19 @@ func Fail(c *gin.Context, httpStatus, code int, message string) {
 	c.JSON(httpStatus, Envelope{
 		Code:      code,
 		Message:   message,
-		RequestID: middleware.GetRequestID(c),
+		RequestID: requestIDFromContext(c),
 	})
+}
+
+// requestIDFromContext reads the request id placed by middleware.RequestID.
+// Returns "" if absent — the test suite relies on this graceful fall-through
+// rather than panicking, since the helper may be invoked before the
+// request_id middleware runs in edge-case wiring.
+func requestIDFromContext(c *gin.Context) string {
+	if v, ok := c.Get("request_id"); ok {
+		if s, ok := v.(string); ok {
+			return s
+		}
+	}
+	return ""
 }
