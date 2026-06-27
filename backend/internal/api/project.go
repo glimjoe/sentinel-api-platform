@@ -32,6 +32,7 @@ import (
 // without dragging the *gorm.DB-backed store fakes in.
 type projectService interface {
 	Create(ctx context.Context, ownerID, name, slug, description string) (*model.Project, error)
+	List(ctx context.Context, ownerID string) ([]*model.Project, error)
 }
 
 // ProjectHandler wires HTTP routes to the project service.
@@ -76,4 +77,24 @@ func (h *ProjectHandler) CreateProject(c *gin.Context) {
 		return
 	}
 	httpx.OK(c, p)
+}
+
+// ListProjects handles GET /api/v1/projects. Returns the caller's
+// projects (currently owner-only; member-of will be added when the
+// service layer exposes a ListByMember method). Empty slice (not nil)
+// when the caller has none, so the frontend can iterate without a
+// nil-check.
+func (h *ProjectHandler) ListProjects(c *gin.Context) {
+	callerID := c.GetString("user_id")
+	if callerID == "" {
+		httpx.Fail(c, http.StatusInternalServerError, 50001,
+			"user_id missing from request context — route not protected")
+		return
+	}
+	list, err := h.svc.List(c.Request.Context(), callerID)
+	if err != nil {
+		middleware.WriteError(c, err)
+		return
+	}
+	httpx.OK(c, list)
 }
