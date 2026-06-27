@@ -19,6 +19,7 @@ import (
 
 	"github.com/glimjoe/sentinel-api-platform/internal/api"
 	"github.com/glimjoe/sentinel-api-platform/internal/middleware"
+	"github.com/glimjoe/sentinel-api-platform/internal/mock"
 	"github.com/glimjoe/sentinel-api-platform/internal/pkg/config"
 	"github.com/glimjoe/sentinel-api-platform/internal/pkg/logger"
 	"github.com/glimjoe/sentinel-api-platform/internal/repository"
@@ -104,6 +105,19 @@ func run() error {
 	r.POST("/api/v1/auth/login", authH.Login)
 	protected := r.Group("/api/v1", middleware.AuthRequired(cfg.Auth.AccessSecret))
 	protected.GET("/auth/me", authH.Me)
+
+	// Mock engine wiring (Phase 2 M1). The public /mock/:projectSlug/*path
+	// route is registered OUTSIDE the protected group — anyone with the
+	// project slug can hit it (this is the whole point of a mock server).
+	projectRepo := repository.NewProjectRepo(db)
+	apiRepo := repository.NewAPIRepo(db)
+	mockRuleRepo := repository.NewMockRuleRepo(db)
+	_ = repository.NewMockHitRepo(db) // M2: wire as HitRecorder
+	varbag := mock.NewRedisVarBag(rdb)
+	matcher := mock.NewMatcher()
+	extractor := mock.NewExtractor()
+	mockEngine := mock.NewEngine(projectRepo, apiRepo, mockRuleRepo, varbag, matcher, extractor, nil)
+	r.Any("/mock/:projectSlug/*path", mockEngine.Serve)
 
 	// 6. HTTP server
 	srv := &http.Server{
