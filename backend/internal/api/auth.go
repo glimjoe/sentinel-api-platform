@@ -9,7 +9,6 @@ package api
 import (
 	"errors"
 	"net/http"
-	"strings"
 
 	"github.com/gin-gonic/gin"
 
@@ -81,13 +80,17 @@ func (h *AuthHandler) Login(c *gin.Context) {
 // Me handles GET /auth/me. Caller is expected to be authenticated; the
 // middleware has already injected user_id into the gin context. We re-resolve
 // the row so a deleted/disabled account can't keep a stale token alive.
+//
+// If user_id is missing or not a string, fail loud with 500 — this means a
+// route-grouping mistake (e.g. registering Me on the unprotected engine
+// instead of inside the protected group). Silently coercing to "" would
+// surface as a confusing 404 via FindByID("", ...).
 func (h *AuthHandler) Me(c *gin.Context) {
-	uid, ok := c.Get("user_id")
-	if !ok {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "missing user_id in context"})
+	userID := c.GetString("user_id")
+	if userID == "" {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "user_id missing from request context — route not protected"})
 		return
 	}
-	userID, _ := uid.(string)
 	u, err := h.svc.Me(c.Request.Context(), userID)
 	if err != nil {
 		writeAuthError(c, err)
@@ -96,7 +99,9 @@ func (h *AuthHandler) Me(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"user": u})
 }
 
-// writeAuthError maps service errors to HTTP responses.
+// writeAuthError maps service errors to HTTP responses. The default branch
+// returns a generic 500 body — the full wrap chain is already captured by
+// AccessLog/Recovery middleware, so we don't try to unmangle it client-side.
 func writeAuthError(c *gin.Context, err error) {
 	switch {
 	case errors.Is(err, errs.ErrEmailTaken):
@@ -110,11 +115,6 @@ func writeAuthError(c *gin.Context, err error) {
 	case errors.Is(err, errs.ErrBadRequest):
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 	default:
-		// Surface innermost error message while keeping a 500.
-		msg := err.Error()
-		if i := strings.LastIndex(msg, ": "); i >= 0 {
-			msg = msg[i+2:]
-		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": msg})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal server error"})
 	}
 }

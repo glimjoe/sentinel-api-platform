@@ -27,7 +27,8 @@ api.interceptors.response.use(
         window.location.href = '/login'
       }
     }
-    const message = error.response?.data?.message ?? error.message
+    // Backend writes `error` (see api/auth.go writeAuthError), not `message`.
+    const message = error.response?.data?.error ?? error.message
     return Promise.reject(new Error(message))
   },
 )

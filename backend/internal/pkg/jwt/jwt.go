@@ -66,7 +66,9 @@ func Parse(secret, token string) (*Claims, error) {
 		if errors.Is(err, jwt.ErrTokenExpired) {
 			return nil, errs.ErrTokenExpired
 		}
-		return nil, fmt.Errorf("%w: %v", errs.ErrInvalidToken, err)
+		// Use %w (not %v) for the inner error so callers can errors.As back to
+		// *jwt.ValidationError and distinguish signature/malformed/issuer etc.
+		return nil, fmt.Errorf("%w: %w", errs.ErrInvalidToken, err)
 	}
 	claims, ok := parsed.Claims.(*Claims)
 	if !ok || !parsed.Valid {

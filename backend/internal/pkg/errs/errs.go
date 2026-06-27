@@ -35,3 +35,13 @@ var (
 	// ErrBadRequest is a generic 400 cause. Handlers attach their own message.
 	ErrBadRequest = errors.New("bad request")
 )
+
+// Generic persistence sentinels. Repository layer maps driver-specific errors
+// (gorm.ErrRecordNotFound, sql.ErrNoRows) onto ErrNotFound so the service
+// layer never imports a driver package.
+var (
+	// ErrNotFound is the domain-level "row not found" sentinel. Repositories
+	// wrap it with fmt.Errorf("...: %w", ErrNotFound) so services can match
+	// via errors.Is(err, errs.ErrNotFound).
+	ErrNotFound = errors.New("record not found")
+)

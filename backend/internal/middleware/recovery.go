@@ -23,9 +23,10 @@ func Recovery(base *zap.Logger) gin.HandlerFunc {
 				}
 				base.Error("panic_recovered", fields...)
 
+				// Match the {error} envelope used by every other handler so the
+				// frontend interceptor (api/client.ts:30) can read it uniformly.
 				c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{
-					"code":    "internal_error",
-					"message": "an unexpected error occurred",
+					"error": "internal server error",
 				})
 			}
 		}()
