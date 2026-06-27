@@ -26,8 +26,9 @@ func init() {
 // avoid a mocking library so the test file has no extra dependency. As
 // more handler methods land, add the matching method here.
 type fakeProjectService struct {
-	CreateFunc func(ctx context.Context, ownerID, name, slug, description string) (*model.Project, error)
-	ListFunc   func(ctx context.Context, ownerID string) ([]*model.Project, error)
+	CreateFunc  func(ctx context.Context, ownerID, name, slug, description string) (*model.Project, error)
+	ListFunc    func(ctx context.Context, ownerID string) ([]*model.Project, error)
+	FindByIDFunc func(ctx context.Context, id string) (*model.Project, error)
 }
 
 func (f *fakeProjectService) Create(ctx context.Context, ownerID, name, slug, description string) (*model.Project, error) {
@@ -36,6 +37,10 @@ func (f *fakeProjectService) Create(ctx context.Context, ownerID, name, slug, de
 
 func (f *fakeProjectService) List(ctx context.Context, ownerID string) ([]*model.Project, error) {
 	return f.ListFunc(ctx, ownerID)
+}
+
+func (f *fakeProjectService) FindByID(ctx context.Context, id string) (*model.Project, error) {
+	return f.FindByIDFunc(ctx, id)
 }
 
 // newTestEngine wires a single POST /projects endpoint behind ProjectHandler
@@ -53,6 +58,7 @@ func newTestEngine(t *testing.T, svc *fakeProjectService, callerID string) *gin.
 	h := &ProjectHandler{svc: svc}
 	r.POST("/api/v1/projects", h.CreateProject)
 	r.GET("/api/v1/projects", h.ListProjects)
+	r.GET("/api/v1/projects/:pid", h.GetProject)
 	return r
 }
 
@@ -325,6 +331,88 @@ func TestListProjects_MissingUserID(t *testing.T) {
 	}
 	r := newTestEngine(t, svc, "")
 	w := doListProjects(t, r)
+
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500; body=%s", w.Code, w.Body.String())
+	}
+	env := decodeEnvelope(t, w.Body.Bytes())
+	if env.Code != 50001 {
+		t.Errorf("app code = %d, want 50001", env.Code)
+	}
+}
+
+// doGetProject is a small driver: GETs /api/v1/projects/:pid and returns
+// the recorded response.
+func doGetProject(t *testing.T, r *gin.Engine, pid string) *httptest.ResponseRecorder {
+	t.Helper()
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/projects/"+pid, nil)
+	r.ServeHTTP(w, req)
+	return w
+}
+
+// TestGetProject_HappyPath — service returns the project; handler
+// surfaces 200 + project envelope. RBAC enforcement is the middleware's
+// job (covered in middleware/rbac_test.go) — the handler assumes the
+// caller is already authorized.
+func TestGetProject_HappyPath(t *testing.T) {
+	svc := &fakeProjectService{
+		FindByIDFunc: func(_ context.Context, id string) (*model.Project, error) {
+			if id != "proj-1" {
+				t.Errorf("FindByID called with id = %q, want proj-1", id)
+			}
+			return &model.Project{ID: id, Name: "Petstore", Slug: "petstore", OwnerID: "u-owner"}, nil
+		},
+	}
+	r := newTestEngine(t, svc, "u-owner")
+	w := doGetProject(t, r, "proj-1")
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", w.Code, w.Body.String())
+	}
+	env := decodeEnvelope(t, w.Body.Bytes())
+	if env.Code != 0 {
+		t.Errorf("app code = %d, want 0 (OK)", env.Code)
+	}
+	raw, _ := json.Marshal(env.Data)
+	if !strings.Contains(string(raw), `"id":"proj-1"`) {
+		t.Errorf("data missing project id: %s", raw)
+	}
+}
+
+// TestGetProject_NotFound — service returns ErrNotFound; handler
+// surfaces 404 via WriteError. (The rbac middleware may also surface
+// 404 if the project doesn't exist; the handler does not preempt that,
+// but the wire contract is the same: 404/40400.)
+func TestGetProject_NotFound(t *testing.T) {
+	svc := &fakeProjectService{
+		FindByIDFunc: func(_ context.Context, _ string) (*model.Project, error) {
+			return nil, errs.ErrNotFound
+		},
+	}
+	r := newTestEngine(t, svc, "u-owner")
+	w := doGetProject(t, r, "proj-missing")
+
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404; body=%s", w.Code, w.Body.String())
+	}
+	env := decodeEnvelope(t, w.Body.Bytes())
+	if env.Code != 40400 {
+		t.Errorf("app code = %d, want 40400", env.Code)
+	}
+}
+
+// TestGetProject_MissingUserID — fail loud (500/50001) if the auth
+// middleware was forgotten.
+func TestGetProject_MissingUserID(t *testing.T) {
+	svc := &fakeProjectService{
+		FindByIDFunc: func(_ context.Context, _ string) (*model.Project, error) {
+			t.Fatal("service.FindByID must not be called when user_id is missing")
+			return nil, nil
+		},
+	}
+	r := newTestEngine(t, svc, "")
+	w := doGetProject(t, r, "proj-1")
 
 	if w.Code != http.StatusInternalServerError {
 		t.Fatalf("status = %d, want 500; body=%s", w.Code, w.Body.String())

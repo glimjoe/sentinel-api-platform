@@ -33,6 +33,7 @@ import (
 type projectService interface {
 	Create(ctx context.Context, ownerID, name, slug, description string) (*model.Project, error)
 	List(ctx context.Context, ownerID string) ([]*model.Project, error)
+	FindByID(ctx context.Context, id string) (*model.Project, error)
 }
 
 // ProjectHandler wires HTTP routes to the project service.
@@ -97,4 +98,23 @@ func (h *ProjectHandler) ListProjects(c *gin.Context) {
 		return
 	}
 	httpx.OK(c, list)
+}
+
+// GetProject handles GET /api/v1/projects/:pid. RBAC (any project member
+// can read) is enforced by middleware.RequireProjectRole in front of this
+// handler in main.go — the handler assumes the caller is authorized and
+// just looks up the project by id.
+func (h *ProjectHandler) GetProject(c *gin.Context) {
+	if c.GetString("user_id") == "" {
+		httpx.Fail(c, http.StatusInternalServerError, 50001,
+			"user_id missing from request context — route not protected")
+		return
+	}
+	pid := c.Param("pid")
+	p, err := h.svc.FindByID(c.Request.Context(), pid)
+	if err != nil {
+		middleware.WriteError(c, err)
+		return
+	}
+	httpx.OK(c, p)
 }
