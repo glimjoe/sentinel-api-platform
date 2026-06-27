@@ -1,0 +1,21 @@
+# Placeholder — real systemd unit authored in Phase 5.
+# Will be installed to /etc/systemd/system/sentinel.service by the user.
+# Example shape (do not use yet):
+#
+#   [Unit]
+#   Description=Sentinel API server
+#   After=network.target mysql.service redis-server.service
+#
+#   [Service]
+#   Type=simple
+#   User=yangwei
+#   WorkingDirectory=/home/yangwei/full-stack-1
+#   EnvironmentFile=/home/yangwei/full-stack-1/.env
+#   ExecStart=/home/yangwei/full-stack-1/backend/bin/sentinel
+#   Restart=on-failure
+#   RestartSec=5
+#   StandardOutput=append:/var/log/sentinel/app.log
+#   StandardError=append:/var/log/sentinel/app.log
+#
+#   [Install]
+#   WantedBy=multi-user.target
