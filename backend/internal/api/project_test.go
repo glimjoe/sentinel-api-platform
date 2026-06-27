@@ -30,6 +30,7 @@ type fakeProjectService struct {
 	ListFunc    func(ctx context.Context, ownerID string) ([]*model.Project, error)
 	FindByIDFunc func(ctx context.Context, id string) (*model.Project, error)
 	UpdateFunc  func(ctx context.Context, callerID, projectID, name, description string) (*model.Project, error)
+	DeleteFunc  func(ctx context.Context, callerID, projectID string) error
 }
 
 func (f *fakeProjectService) Create(ctx context.Context, ownerID, name, slug, description string) (*model.Project, error) {
@@ -46,6 +47,10 @@ func (f *fakeProjectService) FindByID(ctx context.Context, id string) (*model.Pr
 
 func (f *fakeProjectService) Update(ctx context.Context, callerID, projectID, name, description string) (*model.Project, error) {
 	return f.UpdateFunc(ctx, callerID, projectID, name, description)
+}
+
+func (f *fakeProjectService) Delete(ctx context.Context, callerID, projectID string) error {
+	return f.DeleteFunc(ctx, callerID, projectID)
 }
 
 // newTestEngine wires a single POST /projects endpoint behind ProjectHandler
@@ -65,6 +70,7 @@ func newTestEngine(t *testing.T, svc *fakeProjectService, callerID string) *gin.
 	r.GET("/api/v1/projects", h.ListProjects)
 	r.GET("/api/v1/projects/:pid", h.GetProject)
 	r.PATCH("/api/v1/projects/:pid", h.UpdateProject)
+	r.DELETE("/api/v1/projects/:pid", h.DeleteProject)
 	return r
 }
 
@@ -520,6 +526,101 @@ func TestUpdateProject_Forbidden(t *testing.T) {
 	env := decodeEnvelope(t, w.Body.Bytes())
 	if env.Code != 40300 {
 		t.Errorf("app code = %d, want 40300", env.Code)
+	}
+}
+
+// doDeleteProject is a small driver: DELETE /api/v1/projects/:pid.
+func doDeleteProject(t *testing.T, r *gin.Engine, pid string) *httptest.ResponseRecorder {
+	t.Helper()
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodDelete, "/api/v1/projects/"+pid, nil)
+	r.ServeHTTP(w, req)
+	return w
+}
+
+// TestDeleteProject_HappyPath — owner deletes their own project. Returns
+// 200 with empty data (httpx.OK with nil data omits the "data" key).
+// The service is the only check that matters; RBAC at the route level
+// would have let any admin member through, but the service requires
+// owner == callerID.
+func TestDeleteProject_HappyPath(t *testing.T) {
+	svc := &fakeProjectService{
+		DeleteFunc: func(_ context.Context, callerID, projectID string) error {
+			if callerID != "u-owner" || projectID != "proj-1" {
+				t.Errorf("args = (%q,%q), want (u-owner,proj-1)", callerID, projectID)
+			}
+			return nil
+		},
+	}
+	r := newTestEngine(t, svc, "u-owner")
+	w := doDeleteProject(t, r, "proj-1")
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", w.Code, w.Body.String())
+	}
+	env := decodeEnvelope(t, w.Body.Bytes())
+	if env.Code != 0 {
+		t.Errorf("app code = %d, want 0 (OK)", env.Code)
+	}
+}
+
+// TestDeleteProject_NotFound — service returns ErrNotFound. 404.
+func TestDeleteProject_NotFound(t *testing.T) {
+	svc := &fakeProjectService{
+		DeleteFunc: func(_ context.Context, _, _ string) error {
+			return errs.ErrNotFound
+		},
+	}
+	r := newTestEngine(t, svc, "u-owner")
+	w := doDeleteProject(t, r, "proj-missing")
+
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404; body=%s", w.Code, w.Body.String())
+	}
+	env := decodeEnvelope(t, w.Body.Bytes())
+	if env.Code != 40400 {
+		t.Errorf("app code = %d, want 40400", env.Code)
+	}
+}
+
+// TestDeleteProject_Forbidden — admin (non-owner) tries to delete.
+// Service returns ErrForbidden. 403. This is the "co-admin can't
+// destroy owner's project" guard documented in service/project_service.go.
+func TestDeleteProject_Forbidden(t *testing.T) {
+	svc := &fakeProjectService{
+		DeleteFunc: func(_ context.Context, _, _ string) error {
+			return errs.ErrForbidden
+		},
+	}
+	r := newTestEngine(t, svc, "u-admin")
+	w := doDeleteProject(t, r, "proj-1")
+
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403; body=%s", w.Code, w.Body.String())
+	}
+	env := decodeEnvelope(t, w.Body.Bytes())
+	if env.Code != 40300 {
+		t.Errorf("app code = %d, want 40300", env.Code)
+	}
+}
+
+// TestDeleteProject_MissingUserID — fail loud (500/50001).
+func TestDeleteProject_MissingUserID(t *testing.T) {
+	svc := &fakeProjectService{
+		DeleteFunc: func(_ context.Context, _, _ string) error {
+			t.Fatal("service.Delete must not be called when user_id is missing")
+			return nil
+		},
+	}
+	r := newTestEngine(t, svc, "")
+	w := doDeleteProject(t, r, "proj-1")
+
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500; body=%s", w.Code, w.Body.String())
+	}
+	env := decodeEnvelope(t, w.Body.Bytes())
+	if env.Code != 50001 {
+		t.Errorf("app code = %d, want 50001", env.Code)
 	}
 }
 func decodeEnvelope(t *testing.T, body []byte) httpx.Envelope {

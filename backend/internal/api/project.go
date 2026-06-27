@@ -35,6 +35,7 @@ type projectService interface {
 	List(ctx context.Context, ownerID string) ([]*model.Project, error)
 	FindByID(ctx context.Context, id string) (*model.Project, error)
 	Update(ctx context.Context, callerID, projectID, name, description string) (*model.Project, error)
+	Delete(ctx context.Context, callerID, projectID string) error
 }
 
 // ProjectHandler wires HTTP routes to the project service.
@@ -153,4 +154,24 @@ func (h *ProjectHandler) UpdateProject(c *gin.Context) {
 		return
 	}
 	httpx.OK(c, p)
+}
+
+// DeleteProject handles DELETE /api/v1/projects/:pid. Only the project
+// owner can delete (enforced by the service layer — a co-admin cannot
+// destroy a project the owner is still using). The route-level RBAC
+// middleware allows any admin member through, deferring the
+// owner-only check to the service for a more specific 403.
+func (h *ProjectHandler) DeleteProject(c *gin.Context) {
+	callerID := c.GetString("user_id")
+	if callerID == "" {
+		httpx.Fail(c, http.StatusInternalServerError, 50001,
+			"user_id missing from request context — route not protected")
+		return
+	}
+	pid := c.Param("pid")
+	if err := h.svc.Delete(c.Request.Context(), callerID, pid); err != nil {
+		middleware.WriteError(c, err)
+		return
+	}
+	httpx.OK(c, nil)
 }
