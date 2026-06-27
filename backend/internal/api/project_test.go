@@ -27,10 +27,15 @@ func init() {
 // more handler methods land, add the matching method here.
 type fakeProjectService struct {
 	CreateFunc func(ctx context.Context, ownerID, name, slug, description string) (*model.Project, error)
+	ListFunc   func(ctx context.Context, ownerID string) ([]*model.Project, error)
 }
 
 func (f *fakeProjectService) Create(ctx context.Context, ownerID, name, slug, description string) (*model.Project, error) {
 	return f.CreateFunc(ctx, ownerID, name, slug, description)
+}
+
+func (f *fakeProjectService) List(ctx context.Context, ownerID string) ([]*model.Project, error) {
+	return f.ListFunc(ctx, ownerID)
 }
 
 // newTestEngine wires a single POST /projects endpoint behind ProjectHandler
@@ -47,6 +52,7 @@ func newTestEngine(t *testing.T, svc *fakeProjectService, callerID string) *gin.
 	})
 	h := &ProjectHandler{svc: svc}
 	r.POST("/api/v1/projects", h.CreateProject)
+	r.GET("/api/v1/projects", h.ListProjects)
 	return r
 }
 
@@ -221,9 +227,113 @@ func TestCreateProject_UnknownError(t *testing.T) {
 	}
 }
 
-// decodeEnvelope parses a recorded response body as the httpx envelope.
-// Shared across api tests; kept here because the api package's tests
-// don't yet justify a separate test helper file.
+// doListProjects is a small driver: GETs /api/v1/projects and returns
+// the recorded response.
+func doListProjects(t *testing.T, r *gin.Engine) *httptest.ResponseRecorder {
+	t.Helper()
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/projects", nil)
+	r.ServeHTTP(w, req)
+	return w
+}
+
+// TestListProjects_HappyPath — service returns 2 projects, handler
+// surfaces them as 200 + array in the envelope data field. The ownerID
+// argument must equal the caller's user_id from context.
+func TestListProjects_HappyPath(t *testing.T) {
+	svc := &fakeProjectService{
+		ListFunc: func(_ context.Context, ownerID string) ([]*model.Project, error) {
+			if ownerID != "u-owner" {
+				t.Errorf("ownerID = %q, want u-owner", ownerID)
+			}
+			return []*model.Project{
+				{ID: "p1", Name: "Petstore", Slug: "petstore", OwnerID: ownerID},
+				{ID: "p2", Name: "Orders", Slug: "orders", OwnerID: ownerID},
+			}, nil
+		},
+	}
+	r := newTestEngine(t, svc, "u-owner")
+	w := doListProjects(t, r)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", w.Code, w.Body.String())
+	}
+	env := decodeEnvelope(t, w.Body.Bytes())
+	if env.Code != 0 {
+		t.Errorf("app code = %d, want 0 (OK)", env.Code)
+	}
+	// Data must be an array of 2 projects.
+	raw, _ := json.Marshal(env.Data)
+	if !strings.Contains(string(raw), `"id":"p1"`) {
+		t.Errorf("data missing p1: %s", raw)
+	}
+	if !strings.Contains(string(raw), `"id":"p2"`) {
+		t.Errorf("data missing p2: %s", raw)
+	}
+}
+
+// TestListProjects_EmptyList — service returns an empty slice, handler
+// must surface 200 + an empty array (NOT null, NOT a missing key — the
+// frontend iterates without a nil check).
+func TestListProjects_EmptyList(t *testing.T) {
+	svc := &fakeProjectService{
+		ListFunc: func(_ context.Context, _ string) ([]*model.Project, error) {
+			return []*model.Project{}, nil
+		},
+	}
+	r := newTestEngine(t, svc, "u-owner")
+	w := doListProjects(t, r)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", w.Code, w.Body.String())
+	}
+	env := decodeEnvelope(t, w.Body.Bytes())
+	raw, _ := json.Marshal(env.Data)
+	// Must be an empty array, not "null".
+	if string(raw) != "[]" {
+		t.Errorf("data = %s, want [] (empty array, not null)", raw)
+	}
+}
+
+// TestListProjects_ServiceError — unknown error → 500/50000.
+func TestListProjects_ServiceError(t *testing.T) {
+	svc := &fakeProjectService{
+		ListFunc: func(_ context.Context, _ string) ([]*model.Project, error) {
+			return nil, errors.New("db down")
+		},
+	}
+	r := newTestEngine(t, svc, "u-owner")
+	w := doListProjects(t, r)
+
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500; body=%s", w.Code, w.Body.String())
+	}
+	env := decodeEnvelope(t, w.Body.Bytes())
+	if env.Code != 50000 {
+		t.Errorf("app code = %d, want 50000", env.Code)
+	}
+}
+
+// TestListProjects_MissingUserID — fail loud (500/50001) if the auth
+// middleware was forgotten, same convention as CreateProject.
+func TestListProjects_MissingUserID(t *testing.T) {
+	svc := &fakeProjectService{
+		ListFunc: func(_ context.Context, _ string) ([]*model.Project, error) {
+			t.Fatal("service.List must not be called when user_id is missing")
+			return nil, nil
+		},
+	}
+	r := newTestEngine(t, svc, "")
+	w := doListProjects(t, r)
+
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500; body=%s", w.Code, w.Body.String())
+	}
+	env := decodeEnvelope(t, w.Body.Bytes())
+	if env.Code != 50001 {
+		t.Errorf("app code = %d, want 50001", env.Code)
+	}
+}
 func decodeEnvelope(t *testing.T, body []byte) httpx.Envelope {
 	t.Helper()
 	var env httpx.Envelope
