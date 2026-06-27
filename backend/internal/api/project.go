@@ -34,6 +34,7 @@ type projectService interface {
 	Create(ctx context.Context, ownerID, name, slug, description string) (*model.Project, error)
 	List(ctx context.Context, ownerID string) ([]*model.Project, error)
 	FindByID(ctx context.Context, id string) (*model.Project, error)
+	Update(ctx context.Context, callerID, projectID, name, description string) (*model.Project, error)
 }
 
 // ProjectHandler wires HTTP routes to the project service.
@@ -112,6 +113,41 @@ func (h *ProjectHandler) GetProject(c *gin.Context) {
 	}
 	pid := c.Param("pid")
 	p, err := h.svc.FindByID(c.Request.Context(), pid)
+	if err != nil {
+		middleware.WriteError(c, err)
+		return
+	}
+	httpx.OK(c, p)
+}
+
+// updateProjectRequest mirrors the JSON body of PATCH /projects/:pid.
+// All fields optional so callers can PATCH a single field. The service
+// layer treats empty fields as "no change" (see service/project_service.go
+// Update).
+type updateProjectRequest struct {
+	Name        string `json:"name"`
+	Description string `json:"description"`
+}
+
+// UpdateProject handles PATCH /api/v1/projects/:pid. RBAC (admin only) is
+// enforced by middleware.RequireProjectRole in front of this handler.
+// The service layer does its own role check too — a defense-in-depth that
+// catches a caller who is admin on a different project but the URL
+// points at this one.
+func (h *ProjectHandler) UpdateProject(c *gin.Context) {
+	callerID := c.GetString("user_id")
+	if callerID == "" {
+		httpx.Fail(c, http.StatusInternalServerError, 50001,
+			"user_id missing from request context — route not protected")
+		return
+	}
+	var req updateProjectRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		httpx.Fail(c, http.StatusBadRequest, 40000, err.Error())
+		return
+	}
+	pid := c.Param("pid")
+	p, err := h.svc.Update(c.Request.Context(), callerID, pid, req.Name, req.Description)
 	if err != nil {
 		middleware.WriteError(c, err)
 		return

@@ -29,6 +29,7 @@ type fakeProjectService struct {
 	CreateFunc  func(ctx context.Context, ownerID, name, slug, description string) (*model.Project, error)
 	ListFunc    func(ctx context.Context, ownerID string) ([]*model.Project, error)
 	FindByIDFunc func(ctx context.Context, id string) (*model.Project, error)
+	UpdateFunc  func(ctx context.Context, callerID, projectID, name, description string) (*model.Project, error)
 }
 
 func (f *fakeProjectService) Create(ctx context.Context, ownerID, name, slug, description string) (*model.Project, error) {
@@ -41,6 +42,10 @@ func (f *fakeProjectService) List(ctx context.Context, ownerID string) ([]*model
 
 func (f *fakeProjectService) FindByID(ctx context.Context, id string) (*model.Project, error) {
 	return f.FindByIDFunc(ctx, id)
+}
+
+func (f *fakeProjectService) Update(ctx context.Context, callerID, projectID, name, description string) (*model.Project, error) {
+	return f.UpdateFunc(ctx, callerID, projectID, name, description)
 }
 
 // newTestEngine wires a single POST /projects endpoint behind ProjectHandler
@@ -59,6 +64,7 @@ func newTestEngine(t *testing.T, svc *fakeProjectService, callerID string) *gin.
 	r.POST("/api/v1/projects", h.CreateProject)
 	r.GET("/api/v1/projects", h.ListProjects)
 	r.GET("/api/v1/projects/:pid", h.GetProject)
+	r.PATCH("/api/v1/projects/:pid", h.UpdateProject)
 	return r
 }
 
@@ -420,6 +426,100 @@ func TestGetProject_MissingUserID(t *testing.T) {
 	env := decodeEnvelope(t, w.Body.Bytes())
 	if env.Code != 50001 {
 		t.Errorf("app code = %d, want 50001", env.Code)
+	}
+}
+
+// doUpdateProject is a small driver: PATCH /api/v1/projects/:pid with
+// the given fields. Empty fields are omitted from JSON (partial PATCH).
+func doUpdateProject(t *testing.T, r *gin.Engine, pid, name, description string) *httptest.ResponseRecorder {
+	t.Helper()
+	body := map[string]any{}
+	if name != "" {
+		body["name"] = name
+	}
+	if description != "" {
+		body["description"] = description
+	}
+	bs, _ := json.Marshal(body)
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPatch, "/api/v1/projects/"+pid, bytes.NewReader(bs))
+	req.Header.Set("Content-Type", "application/json")
+	r.ServeHTTP(w, req)
+	return w
+}
+
+// TestUpdateProject_HappyPath — admin PATCH with name + description
+// returns 200 + updated project. Caller ID flows through; service
+// decides what to mutate.
+func TestUpdateProject_HappyPath(t *testing.T) {
+	svc := &fakeProjectService{
+		UpdateFunc: func(_ context.Context, callerID, projectID, name, desc string) (*model.Project, error) {
+			if callerID != "u-admin" || projectID != "proj-1" {
+				t.Errorf("args = (%q,%q), want (u-admin,proj-1)", callerID, projectID)
+			}
+			if name != "NewName" || desc != "NewDesc" {
+				t.Errorf("name=%q desc=%q, want NewName/NewDesc", name, desc)
+			}
+			return &model.Project{ID: projectID, Name: name, Slug: "petstore", OwnerID: "u-owner", Description: desc}, nil
+		},
+	}
+	r := newTestEngine(t, svc, "u-admin")
+	w := doUpdateProject(t, r, "proj-1", "NewName", "NewDesc")
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", w.Code, w.Body.String())
+	}
+	env := decodeEnvelope(t, w.Body.Bytes())
+	if env.Code != 0 {
+		t.Errorf("app code = %d, want 0 (OK)", env.Code)
+	}
+	raw, _ := json.Marshal(env.Data)
+	if !strings.Contains(string(raw), `"name":"NewName"`) {
+		t.Errorf("data missing updated name: %s", raw)
+	}
+}
+
+// TestUpdateProject_NotFound — service returns ErrNotFound (e.g.
+// project deleted between RBAC check and Update). Handler surfaces 404.
+func TestUpdateProject_NotFound(t *testing.T) {
+	svc := &fakeProjectService{
+		UpdateFunc: func(_ context.Context, _, _, _, _ string) (*model.Project, error) {
+			return nil, errs.ErrNotFound
+		},
+	}
+	r := newTestEngine(t, svc, "u-admin")
+	w := doUpdateProject(t, r, "proj-missing", "X", "Y")
+
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404; body=%s", w.Code, w.Body.String())
+	}
+	env := decodeEnvelope(t, w.Body.Bytes())
+	if env.Code != 40400 {
+		t.Errorf("app code = %d, want 40400", env.Code)
+	}
+}
+
+// TestUpdateProject_Forbidden — viewer (non-admin) tries to PATCH.
+// Service returns ErrForbidden (after consulting RoleFor); handler
+// surfaces 403. The route-level RBAC middleware would also block this
+// earlier; the handler test pins the wire contract for the case where
+// the caller is admin on a DIFFERENT project and the wrong :pid was
+// passed in the URL.
+func TestUpdateProject_Forbidden(t *testing.T) {
+	svc := &fakeProjectService{
+		UpdateFunc: func(_ context.Context, _, _, _, _ string) (*model.Project, error) {
+			return nil, errs.ErrForbidden
+		},
+	}
+	r := newTestEngine(t, svc, "u-viewer")
+	w := doUpdateProject(t, r, "proj-1", "X", "Y")
+
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403; body=%s", w.Code, w.Body.String())
+	}
+	env := decodeEnvelope(t, w.Body.Bytes())
+	if env.Code != 40300 {
+		t.Errorf("app code = %d, want 40300", env.Code)
 	}
 }
 func decodeEnvelope(t *testing.T, body []byte) httpx.Envelope {
