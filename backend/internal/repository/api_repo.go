@@ -64,3 +64,16 @@ func (r *APIRepo) Delete(ctx context.Context, id string) error {
 	}
 	return nil
 }
+
+// Update applies non-zero fields from fields to the row with the given id.
+// Uses gorm's Updates with a map to avoid zero-value issues with bool/time fields.
+func (r *APIRepo) Update(ctx context.Context, id string, fields map[string]any) error {
+	res := r.db.WithContext(ctx).Model(&model.API{}).Where("id = ?", id).Updates(fields)
+	if res.Error != nil {
+		return fmt.Errorf("update api: %w", res.Error)
+	}
+	if res.RowsAffected == 0 {
+		return fmt.Errorf("api_repo: %w", errs.ErrNotFound)
+	}
+	return nil
+}

@@ -85,3 +85,31 @@ func TestAPIRepo_Delete_Success(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
+func TestAPIRepo_Update_Success(t *testing.T) {
+	gdb, mock := newMockGorm(t)
+	r := NewAPIRepo(gdb)
+
+	mock.ExpectBegin()
+	mock.ExpectExec("UPDATE `apis`").
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+
+	err := r.Update(context.Background(), "01HA", map[string]any{"name": "renamed"})
+	require.NoError(t, err)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestAPIRepo_Update_NotFound(t *testing.T) {
+	gdb, mock := newMockGorm(t)
+	r := NewAPIRepo(gdb)
+
+	mock.ExpectBegin()
+	mock.ExpectExec("UPDATE `apis`").
+		WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectCommit()
+
+	err := r.Update(context.Background(), "missing", map[string]any{"name": "x"})
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, errs.ErrNotFound))
+	require.NoError(t, mock.ExpectationsWereMet())
+}

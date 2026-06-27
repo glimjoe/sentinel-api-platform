@@ -75,6 +75,38 @@ func (f *fakeAPIStore) Delete(_ context.Context, id string) error {
 	return nil
 }
 
+func (f *fakeAPIStore) Update(_ context.Context, id string, fields map[string]any) error {
+	a, ok := f.rows[id]
+	if !ok {
+		return errs.ErrNotFound
+	}
+	if name, ok := fields["name"].(string); ok {
+		a.Name = name
+	}
+	if method, ok := fields["method"].(string); ok {
+		oldKey := f.key(a.ProjectID, a.Method, a.Path)
+		delete(f.keys, oldKey)
+		a.Method = method
+		f.keys[f.key(a.ProjectID, a.Method, a.Path)] = a.ID
+	}
+	if path, ok := fields["path"].(string); ok {
+		oldKey := f.key(a.ProjectID, a.Method, a.Path)
+		delete(f.keys, oldKey)
+		a.Path = path
+		f.keys[f.key(a.ProjectID, a.Method, a.Path)] = a.ID
+	}
+	if op, ok := fields["operation_id"].(string); ok {
+		a.OperationID = op
+	}
+	if d, ok := fields["deprecated"].(bool); ok {
+		a.Deprecated = d
+	}
+	if t, ok := fields["tags_json"].([]byte); ok {
+		a.TagsJSON = t
+	}
+	return nil
+}
+
 // fakeRoleChecker is the stand-in for ProjectService.RoleFor used in tests.
 // Lets each test set up exactly the roles it needs.
 type fakeRoleChecker struct {

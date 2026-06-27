@@ -36,6 +36,7 @@ type apiStore interface {
 	FindByID(ctx context.Context, id string) (*model.API, error)
 	ListByProject(ctx context.Context, projectID string) ([]*model.API, error)
 	Delete(ctx context.Context, id string) error
+	Update(ctx context.Context, id string, fields map[string]any) error
 }
 
 // projectRoleChecker is the contract APIService needs from "something that
@@ -158,4 +159,33 @@ func (s *APIService) Delete(ctx context.Context, callerID, apiID string) error {
 		return fmt.Errorf("delete api: %w", err)
 	}
 	return nil
+}
+// Update patches the API with the given id. Caller must be admin or
+// engineer on the API's project.
+//
+// Errors:
+//   - errs.ErrNotFound  — api doesn't exist
+//   - errs.ErrForbidden — caller is not admin/engineer
+func (s *APIService) Update(ctx context.Context, callerID, apiID string, fields map[string]any) (*model.API, error) {
+	a, err := s.apis.FindByID(ctx, apiID)
+	if err != nil {
+		if errors.Is(err, errs.ErrNotFound) {
+			return nil, errs.ErrNotFound
+		}
+		return nil, fmt.Errorf("find api for update: %w", err)
+	}
+	callerRole, err := s.roles.RoleFor(ctx, a.ProjectID, callerID)
+	if err != nil {
+		return nil, err
+	}
+	if callerRole != model.ProjectRoleAdmin && callerRole != model.ProjectRoleEngineer {
+		return nil, errs.ErrForbidden
+	}
+	if err := s.apis.Update(ctx, apiID, fields); err != nil {
+		if errors.Is(err, errs.ErrNotFound) {
+			return nil, errs.ErrNotFound
+		}
+		return nil, fmt.Errorf("update api: %w", err)
+	}
+	return s.apis.FindByID(ctx, apiID)
 }
