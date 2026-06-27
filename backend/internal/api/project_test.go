@@ -26,11 +26,13 @@ func init() {
 // avoid a mocking library so the test file has no extra dependency. As
 // more handler methods land, add the matching method here.
 type fakeProjectService struct {
-	CreateFunc  func(ctx context.Context, ownerID, name, slug, description string) (*model.Project, error)
-	ListFunc    func(ctx context.Context, ownerID string) ([]*model.Project, error)
-	FindByIDFunc func(ctx context.Context, id string) (*model.Project, error)
-	UpdateFunc  func(ctx context.Context, callerID, projectID, name, description string) (*model.Project, error)
-	DeleteFunc  func(ctx context.Context, callerID, projectID string) error
+	CreateFunc    func(ctx context.Context, ownerID, name, slug, description string) (*model.Project, error)
+	ListFunc      func(ctx context.Context, ownerID string) ([]*model.Project, error)
+	FindByIDFunc  func(ctx context.Context, id string) (*model.Project, error)
+	UpdateFunc    func(ctx context.Context, callerID, projectID, name, description string) (*model.Project, error)
+	DeleteFunc    func(ctx context.Context, callerID, projectID string) error
+	AddMemberFunc func(ctx context.Context, callerID, projectID, userID, role string) error
+	ListMembersFunc func(ctx context.Context, projectID string) ([]*model.ProjectMember, error)
 }
 
 func (f *fakeProjectService) Create(ctx context.Context, ownerID, name, slug, description string) (*model.Project, error) {
@@ -53,6 +55,14 @@ func (f *fakeProjectService) Delete(ctx context.Context, callerID, projectID str
 	return f.DeleteFunc(ctx, callerID, projectID)
 }
 
+func (f *fakeProjectService) AddMember(ctx context.Context, callerID, projectID, userID, role string) error {
+	return f.AddMemberFunc(ctx, callerID, projectID, userID, role)
+}
+
+func (f *fakeProjectService) ListMembers(ctx context.Context, projectID string) ([]*model.ProjectMember, error) {
+	return f.ListMembersFunc(ctx, projectID)
+}
+
 // newTestEngine wires a single POST /projects endpoint behind ProjectHandler
 // with the supplied fake service. Caller ID is injected by the helper
 // (auth middleware is exercised separately in middleware tests).
@@ -71,6 +81,8 @@ func newTestEngine(t *testing.T, svc *fakeProjectService, callerID string) *gin.
 	r.GET("/api/v1/projects/:pid", h.GetProject)
 	r.PATCH("/api/v1/projects/:pid", h.UpdateProject)
 	r.DELETE("/api/v1/projects/:pid", h.DeleteProject)
+	r.POST("/api/v1/projects/:pid/members", h.AddMember)
+	r.GET("/api/v1/projects/:pid/members", h.ListMembers)
 	return r
 }
 
@@ -621,6 +633,154 @@ func TestDeleteProject_MissingUserID(t *testing.T) {
 	env := decodeEnvelope(t, w.Body.Bytes())
 	if env.Code != 50001 {
 		t.Errorf("app code = %d, want 50001", env.Code)
+	}
+}
+
+// doAddMember is a small driver: POST /api/v1/projects/:pid/members
+// with {user_id, role}. Empty fields are omitted.
+func doAddMember(t *testing.T, r *gin.Engine, pid, userID, role string) *httptest.ResponseRecorder {
+	t.Helper()
+	body := map[string]any{}
+	if userID != "" {
+		body["user_id"] = userID
+	}
+	if role != "" {
+		body["role"] = role
+	}
+	bs, _ := json.Marshal(body)
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/projects/"+pid+"/members", bytes.NewReader(bs))
+	req.Header.Set("Content-Type", "application/json")
+	r.ServeHTTP(w, req)
+	return w
+}
+
+// TestAddMember_HappyPath — admin adds a member with role=engineer.
+// Returns 200 with nil data.
+func TestAddMember_HappyPath(t *testing.T) {
+	svc := &fakeProjectService{
+		AddMemberFunc: func(_ context.Context, callerID, projectID, userID, role string) error {
+			if callerID != "u-admin" || projectID != "proj-1" {
+				t.Errorf("caller/project = (%q,%q), want (u-admin,proj-1)", callerID, projectID)
+			}
+			if userID != "u-new" || role != "engineer" {
+				t.Errorf("user/role = (%q,%q), want (u-new,engineer)", userID, role)
+			}
+			return nil
+		},
+	}
+	r := newTestEngine(t, svc, "u-admin")
+	w := doAddMember(t, r, "proj-1", "u-new", "engineer")
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", w.Code, w.Body.String())
+	}
+	env := decodeEnvelope(t, w.Body.Bytes())
+	if env.Code != 0 {
+		t.Errorf("app code = %d, want 0 (OK)", env.Code)
+	}
+}
+
+// TestAddMember_Forbidden — non-admin (engineer / viewer) tries to add
+// a member. Service returns ErrForbidden. 403.
+func TestAddMember_Forbidden(t *testing.T) {
+	svc := &fakeProjectService{
+		AddMemberFunc: func(_ context.Context, _, _, _, _ string) error {
+			return errs.ErrForbidden
+		},
+	}
+	r := newTestEngine(t, svc, "u-viewer")
+	w := doAddMember(t, r, "proj-1", "u-new", "engineer")
+
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403; body=%s", w.Code, w.Body.String())
+	}
+	env := decodeEnvelope(t, w.Body.Bytes())
+	if env.Code != 40300 {
+		t.Errorf("app code = %d, want 40300", env.Code)
+	}
+}
+
+// TestAddMember_InvalidRole — role is not admin/engineer/viewer. Service
+// returns wrapped ErrBadRequest; handler surfaces 400.
+func TestAddMember_InvalidRole(t *testing.T) {
+	svc := &fakeProjectService{
+		AddMemberFunc: func(_ context.Context, _, _, _, _ string) error {
+			return fmt.Errorf("role must be admin/engineer/viewer: %w", errs.ErrBadRequest)
+		},
+	}
+	r := newTestEngine(t, svc, "u-admin")
+	w := doAddMember(t, r, "proj-1", "u-new", "god")
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400; body=%s", w.Code, w.Body.String())
+	}
+	env := decodeEnvelope(t, w.Body.Bytes())
+	if env.Code != 40000 {
+		t.Errorf("app code = %d, want 40000", env.Code)
+	}
+}
+
+// doListMembers is a small driver: GET /api/v1/projects/:pid/members.
+func doListMembers(t *testing.T, r *gin.Engine, pid string) *httptest.ResponseRecorder {
+	t.Helper()
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/projects/"+pid+"/members", nil)
+	r.ServeHTTP(w, req)
+	return w
+}
+
+// TestListMembers_HappyPath — service returns 2 members. Handler surfaces
+// 200 + array in the envelope data.
+func TestListMembers_HappyPath(t *testing.T) {
+	svc := &fakeProjectService{
+		ListMembersFunc: func(_ context.Context, projectID string) ([]*model.ProjectMember, error) {
+			if projectID != "proj-1" {
+				t.Errorf("projectID = %q, want proj-1", projectID)
+			}
+			return []*model.ProjectMember{
+				{ProjectID: projectID, UserID: "u-owner", Role: "admin"},
+				{ProjectID: projectID, UserID: "u-eng", Role: "engineer"},
+			}, nil
+		},
+	}
+	r := newTestEngine(t, svc, "u-owner")
+	w := doListMembers(t, r, "proj-1")
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", w.Code, w.Body.String())
+	}
+	env := decodeEnvelope(t, w.Body.Bytes())
+	if env.Code != 0 {
+		t.Errorf("app code = %d, want 0 (OK)", env.Code)
+	}
+	raw, _ := json.Marshal(env.Data)
+	if !strings.Contains(string(raw), `"user_id":"u-owner"`) {
+		t.Errorf("data missing u-owner: %s", raw)
+	}
+	if !strings.Contains(string(raw), `"user_id":"u-eng"`) {
+		t.Errorf("data missing u-eng: %s", raw)
+	}
+}
+
+// TestListMembers_EmptyList — service returns []. Handler surfaces
+// 200 + [] (not null).
+func TestListMembers_EmptyList(t *testing.T) {
+	svc := &fakeProjectService{
+		ListMembersFunc: func(_ context.Context, _ string) ([]*model.ProjectMember, error) {
+			return []*model.ProjectMember{}, nil
+		},
+	}
+	r := newTestEngine(t, svc, "u-owner")
+	w := doListMembers(t, r, "proj-1")
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", w.Code, w.Body.String())
+	}
+	env := decodeEnvelope(t, w.Body.Bytes())
+	raw, _ := json.Marshal(env.Data)
+	if string(raw) != "[]" {
+		t.Errorf("data = %s, want []", raw)
 	}
 }
 func decodeEnvelope(t *testing.T, body []byte) httpx.Envelope {

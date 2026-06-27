@@ -36,6 +36,8 @@ type projectService interface {
 	FindByID(ctx context.Context, id string) (*model.Project, error)
 	Update(ctx context.Context, callerID, projectID, name, description string) (*model.Project, error)
 	Delete(ctx context.Context, callerID, projectID string) error
+	AddMember(ctx context.Context, callerID, projectID, userID, role string) error
+	ListMembers(ctx context.Context, projectID string) ([]*model.ProjectMember, error)
 }
 
 // ProjectHandler wires HTTP routes to the project service.
@@ -174,4 +176,52 @@ func (h *ProjectHandler) DeleteProject(c *gin.Context) {
 		return
 	}
 	httpx.OK(c, nil)
+}
+
+// addMemberRequest mirrors the JSON body of POST /projects/:pid/members.
+type addMemberRequest struct {
+	UserID string `json:"user_id" binding:"required"`
+	Role   string `json:"role"    binding:"required"`
+}
+
+// AddMember handles POST /api/v1/projects/:pid/members. RBAC (admin only)
+// is enforced by the service layer. The route-level RBAC middleware is
+// mounted at admin in main.go so unauthorized requests never reach the
+// service (a defense-in-depth).
+func (h *ProjectHandler) AddMember(c *gin.Context) {
+	callerID := c.GetString("user_id")
+	if callerID == "" {
+		httpx.Fail(c, http.StatusInternalServerError, 50001,
+			"user_id missing from request context — route not protected")
+		return
+	}
+	var req addMemberRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		httpx.Fail(c, http.StatusBadRequest, 40000, err.Error())
+		return
+	}
+	pid := c.Param("pid")
+	if err := h.svc.AddMember(c.Request.Context(), callerID, pid, req.UserID, req.Role); err != nil {
+		middleware.WriteError(c, err)
+		return
+	}
+	httpx.OK(c, nil)
+}
+
+// ListMembers handles GET /api/v1/projects/:pid/members. Any project
+// member can read the member list (the route-level RBAC middleware
+// allows viewer+ through).
+func (h *ProjectHandler) ListMembers(c *gin.Context) {
+	if c.GetString("user_id") == "" {
+		httpx.Fail(c, http.StatusInternalServerError, 50001,
+			"user_id missing from request context — route not protected")
+		return
+	}
+	pid := c.Param("pid")
+	list, err := h.svc.ListMembers(c.Request.Context(), pid)
+	if err != nil {
+		middleware.WriteError(c, err)
+		return
+	}
+	httpx.OK(c, list)
 }
