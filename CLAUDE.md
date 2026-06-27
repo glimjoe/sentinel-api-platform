@@ -5,7 +5,7 @@
 ## Project at a glance
 
 - **Purpose:** Contract-driven API testing platform. OpenAPI → mock server + test runner + failure attribution.
-- **Owner:** yangwei (full-stack job-hunt portfolio piece)
+- **Owner:** glimjoe (full-stack job-hunt portfolio piece)
 - **Phase:** see `/.claude/plans/expressive-forging-hare.md` (or current plan file)
 - **Status convention:** every PR / commit should reference the phase it advances.
 

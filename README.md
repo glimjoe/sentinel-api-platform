@@ -36,7 +36,7 @@ OpenAPI spec ──▶ register APIs ──▶ configure mock rules ──▶ au
 Prerequisites: Go 1.22+, Node 18+, MySQL 8, Redis 7.
 
 ```bash
-git clone https://github.com/yangwei/sentinel.git
+git clone https://github.com/glimjoe/sentinel-api-platform.git
 cd sentinel
 cp .env.example .env
 make install       # install Go modules + npm packages + run migrations
@@ -63,7 +63,7 @@ See [CONTRIBUTING.md](./CONTRIBUTING.md). Conventional commits required. AI-assi
 
 ## Project meta
 
-- **Owner:** yangwei
+- **Owner:** glimjoe
 - **Target role:** Full-stack engineer
-- **Phases:** 6 (see `/home/yangwei/.claude/plans/expressive-forging-hare.md`)
+- **Phases:** 6 (see `$HOME/.claude/plans/expressive-forging-hare.md`)
 - **Total estimated effort:** 7–8 weeks
