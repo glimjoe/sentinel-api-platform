@@ -21,6 +21,8 @@ import (
 	"github.com/glimjoe/sentinel-api-platform/internal/middleware"
 	"github.com/glimjoe/sentinel-api-platform/internal/pkg/config"
 	"github.com/glimjoe/sentinel-api-platform/internal/pkg/logger"
+	"github.com/glimjoe/sentinel-api-platform/internal/repository"
+	"github.com/glimjoe/sentinel-api-platform/internal/service"
 )
 
 func main() {
@@ -93,6 +95,15 @@ func run() error {
 	healthH := &api.HealthHandler{DB: db, Redis: rdb}
 	r.GET("/api/v1/healthz", healthH.Healthz)
 	r.GET("/api/v1/readyz", healthH.Readyz)
+
+	// Auth wiring (Phase 1).
+	userRepo := repository.NewUserRepo(db)
+	authSvc := service.NewAuthService(userRepo, cfg.Auth.AccessSecret, cfg.Auth.AccessTTL, cfg.Auth.BcryptCost)
+	authH := api.NewAuthHandler(authSvc)
+	r.POST("/api/v1/auth/register", authH.Register)
+	r.POST("/api/v1/auth/login", authH.Login)
+	protected := r.Group("/api/v1", middleware.AuthRequired(cfg.Auth.AccessSecret))
+	protected.GET("/auth/me", authH.Me)
 
 	// 6. HTTP server
 	srv := &http.Server{
