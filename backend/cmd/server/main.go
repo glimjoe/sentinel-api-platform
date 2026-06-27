@@ -20,6 +20,7 @@ import (
 	"github.com/glimjoe/sentinel-api-platform/internal/api"
 	"github.com/glimjoe/sentinel-api-platform/internal/middleware"
 	"github.com/glimjoe/sentinel-api-platform/internal/mock"
+	"github.com/glimjoe/sentinel-api-platform/internal/model"
 	"github.com/glimjoe/sentinel-api-platform/internal/pkg/config"
 	"github.com/glimjoe/sentinel-api-platform/internal/pkg/logger"
 	"github.com/glimjoe/sentinel-api-platform/internal/repository"
@@ -106,12 +107,40 @@ func run() error {
 	protected := r.Group("/api/v1", middleware.AuthRequired(cfg.Auth.AccessSecret))
 	protected.GET("/auth/me", authH.Me)
 
+	// Project wiring (M2-F.A + M2-F.E).
+	projectRepo := repository.NewProjectRepo(db)
+	projectMemberRepo := repository.NewProjectMemberRepo(db)
+	projectSvc := service.NewProjectService(projectRepo, projectMemberRepo)
+	projectH := api.NewProjectHandler(projectSvc)
+
+	protected.POST("/projects", projectH.CreateProject)
+	protected.GET("/projects", projectH.ListProjects)
+	protected.GET("/projects/:pid", middleware.RequireProjectRole(projectSvc,
+		model.ProjectRoleAdmin, model.ProjectRoleEngineer, model.ProjectRoleViewer),
+		projectH.GetProject)
+	protected.PATCH("/projects/:pid", middleware.RequireProjectRole(projectSvc,
+		model.ProjectRoleAdmin),
+		projectH.UpdateProject)
+	protected.DELETE("/projects/:pid", middleware.RequireProjectRole(projectSvc,
+		model.ProjectRoleAdmin, model.ProjectRoleEngineer, model.ProjectRoleViewer),
+		projectH.DeleteProject)
+	protected.GET("/projects/:pid/members", middleware.RequireProjectRole(projectSvc,
+		model.ProjectRoleAdmin, model.ProjectRoleEngineer, model.ProjectRoleViewer),
+		projectH.ListMembers)
+	protected.POST("/projects/:pid/members", middleware.RequireProjectRole(projectSvc,
+		model.ProjectRoleAdmin),
+		projectH.AddMember)
+
+	// API + MockRule services (M2-F.C/D — services constructed, handlers
+	// pending; the route mounting will land when those handlers exist).
+	apiRepo := repository.NewAPIRepo(db)
+	mockRuleRepo := repository.NewMockRuleRepo(db)
+	_ = service.NewAPIService(apiRepo, projectSvc)          // handler: M2-F.C
+	_ = service.NewMockRuleService(mockRuleRepo, projectSvc) // handler: M2-F.D
+
 	// Mock engine wiring (Phase 2 M1). The public /mock/:projectSlug/*path
 	// route is registered OUTSIDE the protected group — anyone with the
 	// project slug can hit it (this is the whole point of a mock server).
-	projectRepo := repository.NewProjectRepo(db)
-	apiRepo := repository.NewAPIRepo(db)
-	mockRuleRepo := repository.NewMockRuleRepo(db)
 	_ = repository.NewMockHitRepo(db) // M2: wire as HitRecorder
 	varbag := mock.NewRedisVarBag(rdb)
 	matcher := mock.NewMatcher()

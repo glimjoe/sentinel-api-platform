@@ -77,3 +77,27 @@ func (r *ProjectRepo) AddMember(ctx context.Context, m *model.ProjectMember) err
 	}
 	return nil
 }
+
+// Delete removes a project row. Cascading FK constraints in the schema
+// (apis → project_id ON DELETE CASCADE, mock_rules → api_id CASCADE) take
+// care of the dependents — this is a hard delete, not a soft one. Used
+// by the DELETE /api/v1/projects/:pid handler when the owner asks for
+// it. (M2-F.E wired the handler; the repo method was missing until now.)
+func (r *ProjectRepo) Delete(ctx context.Context, id string) error {
+	if err := r.db.WithContext(ctx).Where("id = ?", id).Delete(&model.Project{}).Error; err != nil {
+		return fmt.Errorf("delete project: %w", err)
+	}
+	return nil
+}
+
+// Update persists changes to an existing project row. The service layer
+// has already resolved the project via FindByID, mutated the relevant
+// fields, and passed the full struct back. We rely on GORM's default
+// "update by primary key" behavior — passing p with its ID set updates
+// exactly that row.
+func (r *ProjectRepo) Update(ctx context.Context, p *model.Project) error {
+	if err := r.db.WithContext(ctx).Save(p).Error; err != nil {
+		return fmt.Errorf("update project: %w", err)
+	}
+	return nil
+}
