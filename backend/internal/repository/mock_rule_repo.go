@@ -114,3 +114,17 @@ func (r *MockRuleRepo) Update(ctx context.Context, id string, fields map[string]
 	}
 	return nil
 }
+
+// Delete removes a rule by id. Returns errs.ErrNotFound if no row matched.
+func (r *MockRuleRepo) Delete(ctx context.Context, id string) error {
+	res := r.db.WithContext(ctx).
+		Where("id = ?", id).
+		Delete(&model.MockRule{})
+	if res.Error != nil {
+		return fmt.Errorf("delete mock_rule: %w", res.Error)
+	}
+	if res.RowsAffected == 0 {
+		return fmt.Errorf("mock_rule_repo: %w", errs.ErrNotFound)
+	}
+	return nil
+}

@@ -33,6 +33,7 @@ type mockRuleStore interface {
 	Create(ctx context.Context, r *model.MockRule) error
 	FindByID(ctx context.Context, id string) (*model.MockRule, error)
 	ListByAPI(ctx context.Context, apiID string) ([]*model.MockRule, error)
+	Delete(ctx context.Context, id string) error
 	Update(ctx context.Context, id string, fields map[string]any) error
 	IncrementHitCount(ctx context.Context, id string) error
 }
@@ -175,4 +176,74 @@ func (s *MockRuleService) IncrementHitCount(ctx context.Context, ruleID string) 
 		return fmt.Errorf("increment hit count: %w", err)
 	}
 	return nil
+}
+// Delete removes a rule. Caller must be admin or engineer on projectID.
+//
+// Errors:
+//   - errs.ErrForbidden — caller is not admin/engineer
+//   - errs.ErrNotFound  — rule doesn't exist
+func (s *MockRuleService) Delete(ctx context.Context, callerID, projectID, ruleID string) error {
+	callerRole, err := s.roles.RoleFor(ctx, projectID, callerID)
+	if err != nil {
+		return err
+	}
+	if callerRole != model.ProjectRoleAdmin && callerRole != model.ProjectRoleEngineer {
+		return errs.ErrForbidden
+	}
+	if err := s.rules.Delete(ctx, ruleID); err != nil {
+		if errors.Is(err, errs.ErrNotFound) {
+			return errs.ErrNotFound
+		}
+		return fmt.Errorf("delete mock_rule: %w", err)
+	}
+	return nil
+}
+
+// GetHitCount returns the current hit_count for a rule. The engine calls
+// IncrementHitCount after each match; this read-only accessor powers the
+// hit-count endpoint.
+func (s *MockRuleService) GetHitCount(ctx context.Context, ruleID string) (int64, error) {
+	r, err := s.rules.FindByID(ctx, ruleID)
+	if err != nil {
+		if errors.Is(err, errs.ErrNotFound) {
+			return 0, errs.ErrNotFound
+		}
+		return 0, fmt.Errorf("get hit count: %w", err)
+	}
+	return r.HitCount, nil
+}
+
+// CreateRule is the handler-friendly alias for Create.
+func (s *MockRuleService) CreateRule(ctx context.Context, callerID, projectID, apiID string, spec CreateRuleSpec) (*model.MockRule, error) {
+	return s.Create(ctx, callerID, projectID, apiID, spec)
+}
+
+// GetRule is the handler-friendly alias for FindByID.
+func (s *MockRuleService) GetRule(ctx context.Context, id string) (*model.MockRule, error) {
+	return s.FindByID(ctx, id)
+}
+
+// UpdateRule is the handler-friendly alias for Update.
+func (s *MockRuleService) UpdateRule(ctx context.Context, callerID, projectID, ruleID string, fields map[string]any) (*model.MockRule, error) {
+	return s.Update(ctx, callerID, projectID, ruleID, fields)
+}
+
+// DeleteRule is the handler-friendly alias for Delete.
+func (s *MockRuleService) DeleteRule(ctx context.Context, callerID, projectID, ruleID string) error {
+	return s.Delete(ctx, callerID, projectID, ruleID)
+}
+
+// ListRules is the handler-friendly alias for ListByAPI.
+func (s *MockRuleService) ListRules(ctx context.Context, apiID string) ([]*model.MockRule, error) {
+	return s.ListByAPI(ctx, apiID)
+}
+
+// RecordHit is the handler-friendly alias for IncrementHitCount.
+func (s *MockRuleService) RecordHit(ctx context.Context, ruleID string) error {
+	return s.IncrementHitCount(ctx, ruleID)
+}
+
+// ListHits is the handler-friendly alias for GetHitCount.
+func (s *MockRuleService) ListHits(ctx context.Context, ruleID string) (int64, error) {
+	return s.GetHitCount(ctx, ruleID)
 }

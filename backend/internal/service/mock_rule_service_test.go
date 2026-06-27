@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"testing"
 
 	"github.com/glimjoe/sentinel-api-platform/internal/model"
@@ -238,4 +239,11 @@ func TestMockRuleService_IncrementHitCount(t *testing.T) {
 	if r2.HitCount != 3 {
 		t.Errorf("HitCount = %d, want 3", r2.HitCount)
 	}
+}
+func (f *fakeMockRuleStore) Delete(_ context.Context, id string) error {
+	if _, ok := f.rows[id]; !ok {
+		return fmt.Errorf("mock_rule_repo: %w", errs.ErrNotFound)
+	}
+	delete(f.rows, id)
+	return nil
 }
