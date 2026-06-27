@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -10,7 +11,6 @@ import (
 	"github.com/go-sql-driver/mysql"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"gorm.io/gorm"
 
 	"github.com/glimjoe/sentinel-api-platform/internal/model"
 	"github.com/glimjoe/sentinel-api-platform/internal/pkg/errs"
@@ -48,14 +48,14 @@ func (f *fakeUserStore) FindByEmail(_ context.Context, email string) (*model.Use
 	if u, ok := f.byEmail[email]; ok {
 		return u, nil
 	}
-	return nil, gorm.ErrRecordNotFound
+	return nil, fmt.Errorf("fake_user_store: %w", errs.ErrNotFound)
 }
 
 func (f *fakeUserStore) FindByID(_ context.Context, id string) (*model.User, error) {
 	if u, ok := f.byID[id]; ok {
 		return u, nil
 	}
-	return nil, gorm.ErrRecordNotFound
+	return nil, fmt.Errorf("fake_user_store: %w", errs.ErrNotFound)
 }
 
 // newTestService wires AuthService against the fake with sane defaults.
@@ -165,10 +165,13 @@ func TestAuthService_Login_InactiveUser(t *testing.T) {
 	require.NoError(t, err)
 	users.byID[u.ID].IsActive = false
 
+	// Inactive accounts return ErrInvalidCredentials (not ErrUserInactive) to
+	// prevent account enumeration — Login's caller can't distinguish this from
+	// unknown-email / wrong-password. ErrUserInactive is reserved for Me.
 	_, _, err = svc.Login(context.Background(),
 		"alice@example.com", "hunter2hunter")
 	require.Error(t, err)
-	assert.ErrorIs(t, err, errs.ErrUserInactive)
+	assert.ErrorIs(t, err, errs.ErrInvalidCredentials)
 }
 
 func TestAuthService_Me(t *testing.T) {

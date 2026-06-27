@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/go-sql-driver/mysql"
-	"gorm.io/gorm"
 
 	"github.com/glimjoe/sentinel-api-platform/internal/model"
 	"github.com/glimjoe/sentinel-api-platform/internal/pkg/errs"
@@ -83,8 +82,11 @@ func (s *AuthService) Register(ctx context.Context, email, plain, displayName st
 }
 
 // Login verifies email + password and returns (user, access_token).
-// Returns errs.ErrInvalidCredentials when the user is missing OR the password
-// does not match, to avoid leaking which emails are registered.
+// Returns errs.ErrInvalidCredentials for: missing user, disabled user, OR wrong
+// password. Collapsing all three prevents account enumeration — a distinct
+// 403 for "user exists but is disabled" would let an attacker probe valid emails.
+// ErrUserInactive is reserved for already-authenticated paths (Me) where the
+// caller is the legitimate owner being told their account is locked.
 func (s *AuthService) Login(ctx context.Context, email, plain string) (*model.User, string, error) {
 	email = strings.ToLower(strings.TrimSpace(email))
 	if email == "" || plain == "" {
@@ -93,13 +95,13 @@ func (s *AuthService) Login(ctx context.Context, email, plain string) (*model.Us
 
 	u, err := s.users.FindByEmail(ctx, email)
 	if err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
+		if errors.Is(err, errs.ErrNotFound) {
 			return nil, "", errs.ErrInvalidCredentials
 		}
 		return nil, "", fmt.Errorf("lookup user: %w", err)
 	}
 	if !u.IsActive {
-		return nil, "", errs.ErrUserInactive
+		return nil, "", errs.ErrInvalidCredentials
 	}
 	if !password.Verify(u.PasswordHash, plain) {
 		return nil, "", errs.ErrInvalidCredentials
@@ -114,11 +116,12 @@ func (s *AuthService) Login(ctx context.Context, email, plain string) (*model.Us
 
 // Me returns the user identified by id (claims.UserID from middleware).
 // Returns errs.ErrUserNotFound if the row vanished between auth and lookup,
-// or errs.ErrUserInactive if the account was disabled.
+// or errs.ErrUserInactive if the account was disabled — here the caller is
+// already authenticated and is the legitimate owner, so disclosure is fine.
 func (s *AuthService) Me(ctx context.Context, userID string) (*model.User, error) {
 	u, err := s.users.FindByID(ctx, userID)
 	if err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
+		if errors.Is(err, errs.ErrNotFound) {
 			return nil, errs.ErrUserNotFound
 		}
 		return nil, fmt.Errorf("lookup user: %w", err)
@@ -129,14 +132,20 @@ func (s *AuthService) Me(ctx context.Context, userID string) (*model.User, error
 	return u, nil
 }
 
-// validateRegisterInput enforces a minimum bar on email + password length.
-// Tighter rules (regex, complexity) can land in a follow-up.
+// validateRegisterInput enforces a minimum bar on email + password length
+// AND a bcrypt-compatible upper bound. bcrypt truncates input at 72 bytes
+// silently; without this cap, two passwords sharing the first 72 bytes
+// hash to the same value and Verify accepts either. Reject early so callers
+// get a clear 400 instead of silent truncation.
 func validateRegisterInput(email, plain string) error {
 	if !strings.Contains(email, "@") {
 		return fmt.Errorf("%w: email must contain '@'", errs.ErrBadRequest)
 	}
 	if len(plain) < 8 {
 		return fmt.Errorf("%w: password must be >= 8 chars", errs.ErrBadRequest)
+	}
+	if len(plain) > 72 {
+		return fmt.Errorf("%w: password must be <= 72 chars (bcrypt limit)", errs.ErrBadRequest)
 	}
 	return nil
 }

@@ -39,7 +39,7 @@ export const useAuthStore = defineStore('auth', () => {
 
   async function login(email: string, password: string): Promise<void> {
     const resp = await api.post<AuthResponse, AuthResponse>('/auth/login', { email, password })
-    setTokens(resp.accessToken, resp.refreshToken)
+    setTokens(resp.access_token, resp.refresh_token)
     user.value = resp.user
   }
 
@@ -49,7 +49,7 @@ export const useAuthStore = defineStore('auth', () => {
       password,
       displayName,
     })
-    setTokens(resp.accessToken, resp.refreshToken)
+    setTokens(resp.access_token, resp.refresh_token)
     user.value = resp.user
   }
 

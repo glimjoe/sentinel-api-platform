@@ -19,7 +19,7 @@
 
 ## Conventions
 
-- **Git:** Conventional Commits, branch prefix `feat/`. AI-assisted commits must end with `AI-Assisted: [claude-code|copilot|manual]`.
+- **Git:** Conventional Commits, branch prefix `feat/` (also accepted: `fix/`, `chore/`, `docs/`, `refactor/`, `test/`, `hotfix/`). A `.git/hooks/pre-push` hook enforces this from Phase 2 onward. Phase 0–1 commits landed directly on `main` before the hook existed. AI-assisted commits must end with `AI-Assisted: [claude-code|copilot|manual]`.
 - **Go:** `gofmt` + `goimports`. GORM models carry json tags. Errors are wrapped with `fmt.Errorf("...: %w", err)`. Domain errors live in `internal/pkg/errs`.
 - **Vue:** TypeScript strict mode. Pinia for state, Element Plus for UI primitives. No `any` unless annotated with `// @ts-expect-error` and a reason.
 - **Paths:** use `path/filepath` in Go (forward slashes internally). In bash scripts, always use `"$REPO_ROOT"` quoted.

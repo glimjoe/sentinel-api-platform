@@ -198,9 +198,19 @@ func (c *Config) validate() error {
 	if c.Redis.Host == "" {
 		return fmt.Errorf("REDIS_HOST required")
 	}
+	// JWT secret length is enforced in every environment, not just production:
+	// a dev boot with an empty/short secret silently produces forgeable tokens
+	// (HS256 happily signs with []byte("")), and a dev .env accidentally
+	// promoted to prod would pass the previous production-only check.
+	if c.Auth.AccessSecret == "" || len(c.Auth.AccessSecret) < 32 {
+		return fmt.Errorf("JWT_ACCESS_SECRET must be >= 32 chars")
+	}
 	if c.App.Env == "production" {
-		if c.Auth.AccessSecret == "" || len(c.Auth.AccessSecret) < 32 {
-			return fmt.Errorf("JWT_ACCESS_SECRET must be >= 32 chars in production")
+		if c.Auth.RefreshSecret == "" || len(c.Auth.RefreshSecret) < 32 {
+			return fmt.Errorf("JWT_REFRESH_SECRET must be >= 32 chars in production")
+		}
+		if c.App.FrontendOrigin == "" {
+			return fmt.Errorf("FRONTEND_ORIGIN required in production (CORS)")
 		}
 	}
 	return nil
