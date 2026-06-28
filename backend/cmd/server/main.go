@@ -241,7 +241,9 @@ func run() error {
 	aiProvider := ai.NewProvider(cfg.AI.Provider, cfg.AI.AnthropicKey, cfg.AI.OpenAIKey)
 	aiCache := ai.NewCache(rdb, time.Duration(cfg.AI.CacheTTLSeconds)*time.Second)
 	aiGuard := ai.NewGuard(aiRepo, cfg.AI.DailyLimitUSD, cfg.AI.MonthlyLimitUSD)
-	aiEngine := ai.NewEngine(aiProvider, aiCache, aiGuard, cfg.AI.MaxTokens, 0.3)
+	temp := cfg.AI.Temperature
+if temp == 0 { temp = 0.3 }
+aiEngine := ai.NewEngine(aiProvider, aiCache, aiGuard, cfg.AI.MaxTokens, temp)
 	aiSvc := service.NewAIService(projectSvc, ai.NewAttributor(aiEngine), ai.NewCompleter(aiEngine), ai.NewPrioritizer(aiEngine), apiRepo, testCaseRepo, aiGuard)
 	aiH := api.NewAIHandler(aiSvc)
 
