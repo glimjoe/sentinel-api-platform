@@ -13,7 +13,7 @@ NPM_BIN       ?= npm
 
 # --- Phony targets ---------------------------------------------------------------
 .PHONY: help install dev build test test-unit test-integration test-coverage \
-        e2e lint format migrate seed clean stop logs doctor
+        e2e lint format migrate seed dump clean stop logs doctor
 
 # --- Help (default) --------------------------------------------------------------
 help: ## Show this help message
@@ -48,6 +48,9 @@ migrate-status: ## Show migration status
 
 seed: ## Load demo data (admin user, sample project, APIs, cases, mock rules)
 	@bash scripts/seed.sh
+
+dump: ## Backup MySQL database to sentinel_YYYYMMDD.sql.gz
+	@bash scripts/dump.sh
 
 # --- Testing ---------------------------------------------------------------------
 test: test-unit test-integration ## Run all Go tests (unit + integration)

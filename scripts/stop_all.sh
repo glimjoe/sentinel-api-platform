@@ -1,20 +1,43 @@
 #!/usr/bin/env bash
 # Stop all Sentinel services started by start_all.sh.
-# Phase 0 stub: noop.
-
 set -euo pipefail
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+PID_DIR="$REPO_ROOT/.pids"
 
-C_OK="\033[32m"; C_RST="\033[0m"
-[[ -t 1 ]] || { C_OK=""; C_RST=""; }
+C_OK="\033[32m"; C_WARN="\033[33m"; C_RST="\033[0m"
+[[ -t 1 ]] || { C_OK=""; C_WARN=""; C_RST=""; }
 
-printf "${C_OK}[stop]${C_RST} Sentinel shutdown\n"
+stopped=0
 
-# Future (Phase 1+): read pid files and kill.
-#   for pidfile in backend/.pid frontend/.dev.pid; do
-#     [[ -f "$REPO_ROOT/$pidfile" ]] && kill "$(cat "$REPO_ROOT/$pidfile")" 2>/dev/null || true
-#     rm -f "$REPO_ROOT/$pidfile"
-#   done
+for svc in backend frontend; do
+  pidfile="$PID_DIR/${svc}.pid"
+  if [[ -f "$pidfile" ]]; then
+    pid=$(cat "$pidfile")
+    if kill -0 "$pid" 2>/dev/null; then
+      kill "$pid" 2>/dev/null || true
+      printf "${C_OK}[stop]${C_RST} %s (pid %s) terminated\n" "$svc" "$pid"
+      stopped=$((stopped + 1))
+    else
+      printf "${C_WARN}[stop]${C_RST} %s pid %s not running (stale pid)\n" "$svc" "$pid"
+    fi
+    rm -f "$pidfile"
+  fi
+done
 
-printf "${C_OK}[stop]${C_RST} Phase 0 stub: nothing to stop.\n"
+# Fallback: kill processes on our ports.
+APP_PORT="${APP_PORT:-8081}"
+FRONTEND_PORT="${FRONTEND_PORT:-5180}"
+
+for port in "$APP_PORT" "$FRONTEND_PORT"; do
+  if pids=$(lsof -ti "tcp:$port" 2>/dev/null); then
+    for p in $pids; do
+      kill "$p" 2>/dev/null || true
+      printf "${C_OK}[stop]${C_RST} port %s freed (pid %s)\n" "$port" "$p"
+      stopped=$((stopped + 1))
+    done
+  fi
+done
+
+[[ $stopped -eq 0 ]] && printf "${C_WARN}[stop]${C_RST} nothing was running\n"
