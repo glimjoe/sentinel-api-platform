@@ -59,6 +59,18 @@ make dev           # backend :8081, frontend :5180
 
 Open <http://localhost:5180>.
 
+## Demo
+
+```bash
+# Generate a demo GIF walkthrough (requires ImageMagick):
+bash scripts/start_all.sh
+make seed
+npx tsx scripts/demo-screenshots.ts
+convert -delay 150 -loop 0 demo-*.png demo.gif
+```
+
+> Run `make demo-gif` after starting the stack to capture a walkthrough GIF.
+
 ## Make targets
 
 | Command | Description |

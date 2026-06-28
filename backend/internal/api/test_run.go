@@ -2,9 +2,12 @@ package api
 
 import (
 	"context"
+	"encoding/csv"
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strconv"
+	"time"
 
 	"github.com/gin-gonic/gin"
 
@@ -86,13 +89,80 @@ func (h *TestRunHandler) Cancel(c *gin.Context) {
 }
 
 // Export handles GET /api/v1/projects/:pid/runs/:runId/results.
+// Supports ?format=csv to download CSV; defaults to JSON envelope.
 func (h *TestRunHandler) Export(c *gin.Context) {
 	results, err := h.svc.ExportResults(c.Request.Context(), c.Param("runId"))
 	if err != nil {
 		middleware.WriteError(c, err)
 		return
 	}
+
+	if c.Query("format") == "csv" {
+		writeCSV(c, results)
+		return
+	}
 	httpx.OK(c, results)
+}
+
+func writeCSV(c *gin.Context, results any) {
+	type row struct {
+		ID, CaseID, Status string
+		ActualStatus       int
+		DurationMs         int
+		ErrorMsg           string
+		CreatedAt          time.Time
+	}
+	list, ok := results.([]any)
+	if !ok {
+		httpx.Fail(c, http.StatusInternalServerError, 50000, "unexpected export type")
+		return
+	}
+
+	c.Writer.Header().Set("Content-Type", "text/csv; charset=utf-8")
+	c.Writer.Header().Set("Content-Disposition",
+		`attachment; filename="results-`+time.Now().Format("20060102_150405")+`.csv"`)
+
+	w := csv.NewWriter(c.Writer)
+	_ = w.Write([]string{"id", "case_id", "status", "actual_status", "duration_ms", "error_msg", "created_at"})
+
+	for _, item := range list {
+		m, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		_ = w.Write([]string{
+			stringField(m, "id"),
+			stringField(m, "case_id"),
+			stringField(m, "status"),
+			strconv.Itoa(intField(m, "actual_status")),
+			strconv.Itoa(intField(m, "duration_ms")),
+			stringField(m, "error_msg"),
+			stringField(m, "created_at"),
+		})
+	}
+	w.Flush()
+}
+
+func stringField(m map[string]any, key string) string {
+	if v, ok := m[key]; ok {
+		s, _ := v.(string)
+		return s
+	}
+	return ""
+}
+
+func intField(m map[string]any, key string) int {
+	if v, ok := m[key]; ok {
+		switch n := v.(type) {
+		case float64:
+			return int(n)
+		case int:
+			return n
+		case int64:
+			return int(n)
+		}
+	}
+	return 0
 }
 
 // Stream handles GET /api/v1/projects/:pid/runs/:runId/stream — SSE.

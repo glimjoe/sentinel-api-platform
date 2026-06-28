@@ -246,6 +246,12 @@ func run() error {
 			model.ProjectRoleAdmin, model.ProjectRoleEngineer, model.ProjectRoleViewer),
 		testRunH.Stream)
 
+	// Dashboard stats (Phase 5b — ECharts dashboard).
+	dashboardRepo := repository.NewDashboardRepo(db)
+	dashboardSvc := service.NewDashboardService(dashboardRepo)
+	dashboardH := api.NewDashboardHandler(dashboardSvc)
+	protected.GET("/dashboard", dashboardH.Stats)
+
 	// AI module wiring (Phase 4).
 	aiRepo := repository.NewAiRepo(db)
 	aiProvider := ai.NewProvider(cfg.AI.Provider, cfg.AI.AnthropicKey, cfg.AI.OpenAIKey)

@@ -42,8 +42,10 @@ test('journey 2: create project', async ({ page, request }) => {
   const jar = parseCookies(setCookie)
   await page.context().addCookies(
     jar.map((c) => ({
-      name: c.name, value: c.value,
-      domain: 'localhost', path: c.path || '/',
+      name: c.name,
+      value: c.value,
+      domain: 'localhost',
+      path: c.path || '/',
     })),
   )
 
@@ -83,32 +85,39 @@ test('journey 4: add mock rule', async ({ request }) => {
   const apiResp = await request.post(`${API}/projects/${pid}/apis`, {
     headers: { ...h, 'Content-Type': 'application/json' },
     data: {
-      name: 'Get Pets', method: 'GET', path: '/pets',
-      operation_id: 'getPets', source: 'manual',
+      name: 'Get Pets',
+      method: 'GET',
+      path: '/pets',
+      operation_id: 'getPets',
+      source: 'manual',
     },
   })
   // API creation confirms the endpoint is wired; exact code depends on RBAC.
   expect([200, 400, 403, 500]).toContain(apiResp.status())
   let apiId = ''
   try {
-    const json = await apiResp.json() as any
+    const json = (await apiResp.json()) as any
     apiId = json.data?.id ?? json.id ?? ''
-  } catch { /* body may be empty on non-200 */ }
+  } catch {
+    /* body may be empty on non-200 */
+  }
 
   if (apiId) {
     const ruleResp = await request.post(`${API}/rules?api_id=${apiId}`, {
       headers: { ...h, 'Content-Type': 'application/json' },
       data: {
-        name: 'Return empty list', priority: 1,
+        name: 'Return empty list',
+        priority: 1,
         match_json: { method: 'GET' },
-        response_status: 200, response_body: '[]',
+        response_status: 200,
+        response_body: '[]',
       },
     })
     expect([200, 400, 403, 404]).toContain(ruleResp.status())
   }
 
   // Verify mock server endpoint is reachable (public, no auth).
-  const proj = await (await request.get(`${API}/projects/${pid}`, { headers: h })).json() as any
+  const proj = (await (await request.get(`${API}/projects/${pid}`, { headers: h })).json()) as any
   const slug = proj.data?.slug ?? proj.slug
   const mockResp = await request.get(`http://localhost:8081/mock/${slug}/pets`)
   expect([200, 404, 422]).toContain(mockResp.status())
@@ -123,23 +132,27 @@ test('journey 5: create and run test case', async ({ request }) => {
   const caseResp = await request.post(`${API}/projects/${pid}/cases`, {
     headers: { ...h, 'Content-Type': 'application/json' },
     data: {
-      name: 'Health check', method: 'GET', path: '/healthz',
-      expected_status: 200, expected_body_match: 'none',
+      name: 'Health check',
+      method: 'GET',
+      path: '/healthz',
+      expected_status: 200,
+      expected_body_match: 'none',
     },
   })
   expect(caseResp.status()).toBe(200)
-  const caseId = (await caseResp.json() as any).data?.id ?? (await caseResp.json() as any).id
+  const caseId = ((await caseResp.json()) as any).data?.id ?? ((await caseResp.json()) as any).id
 
   const runResp = await request.post(`${API}/projects/${pid}/runs`, {
     headers: { ...h, 'Content-Type': 'application/json' },
     data: {
-      name: 'E2E Run', mode: 'sequential',
+      name: 'E2E Run',
+      mode: 'sequential',
       target_base_url: 'http://localhost:8081',
       case_filter_json: { case_ids: [caseId] },
     },
   })
   expect(runResp.status()).toBe(200)
-  const runId = (await runResp.json() as any).data?.id ?? (await runResp.json() as any).id
+  const runId = ((await runResp.json()) as any).data?.id ?? ((await runResp.json()) as any).id
 
   const startResp = await request.post(`${API}/projects/${pid}/runs/${runId}/start`, {
     headers: { ...h, 'Content-Type': 'application/json' },
@@ -149,7 +162,7 @@ test('journey 5: create and run test case', async ({ request }) => {
   await new Promise((r) => setTimeout(r, 4000))
   const statusResp = await request.get(`${API}/projects/${pid}/runs/${runId}`, { headers: h })
   expect(statusResp.status()).toBe(200)
-  const run = (await statusResp.json() as any).data ?? (await statusResp.json())
+  const run = ((await statusResp.json()) as any).data ?? (await statusResp.json())
   expect(['success', 'failed', 'partial', 'queued', 'running']).toContain(run.status)
 })
 
@@ -160,9 +173,7 @@ interface AuthResult {
   csrf: string
 }
 
-async function loginAs(
-  email: string, password: string, request: any,
-): Promise<AuthResult> {
+async function loginAs(email: string, password: string, request: any): Promise<AuthResult> {
   await request.post(`${API}/auth/register`, { data: { email, password } })
   const resp = await request.post(`${API}/auth/login`, { data: { email, password } })
   const setCookie = resp.headers()['set-cookie'] || ''
@@ -178,13 +189,16 @@ async function loginAs(
 }
 
 async function createProject(
-  name: string, slug: string, headers: Record<string, string>, request: any,
+  name: string,
+  slug: string,
+  headers: Record<string, string>,
+  request: any,
 ): Promise<string> {
   const resp = await request.post(`${API}/projects`, {
     headers: { ...headers, 'Content-Type': 'application/json' },
     data: { name, slug },
   })
-  const json = await resp.json() as any
+  const json = (await resp.json()) as any
   return json.data?.id ?? json.id
 }
 

@@ -13,7 +13,7 @@ NPM_BIN       ?= npm
 
 # --- Phony targets ---------------------------------------------------------------
 .PHONY: help install dev build test test-unit test-integration test-coverage \
-        e2e lint format migrate seed dump clean stop logs doctor
+        e2e lint format migrate seed dump clean stop logs doctor demo-gif
 
 # --- Help (default) --------------------------------------------------------------
 help: ## Show this help message
@@ -51,6 +51,11 @@ seed: ## Load demo data (admin user, sample project, APIs, cases, mock rules)
 
 dump: ## Backup MySQL database to sentinel_YYYYMMDD.sql.gz
 	@bash scripts/dump.sh
+
+demo-gif: ## Generate demo GIF walkthrough (requires stack running + ImageMagick)
+	@npx tsx scripts/demo-screenshots.ts
+	@convert -delay 150 -loop 0 demo-*.png demo.gif
+	@echo "Demo GIF saved: demo.gif"
 
 # --- Testing ---------------------------------------------------------------------
 test: test-unit test-integration ## Run all Go tests (unit + integration)
