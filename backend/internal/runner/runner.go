@@ -3,6 +3,7 @@ package runner
 import (
 	"context"
 	"fmt"
+	"log"
 	"sync"
 	"time"
 
@@ -32,26 +33,38 @@ func Run(ctx context.Context, run *model.TestRun, cases []*model.TestCase, baseU
 	run.StartedAt = &now
 
 	// Mark running
-	updater.Update(ctx, run.ID, map[string]any{
+	logUpdateErr(updater.Update(ctx, run.ID, map[string]any{
 		"status": run.Status, "total": run.Total, "started_at": run.StartedAt,
-	})
+	}))
 
 	var mu sync.Mutex
 	aggregate := func(status string) {
 		mu.Lock()
 		defer mu.Unlock()
 		switch status {
-		case "pass": run.Passed++
-		case "fail": run.Failed++
-		case "error": run.Errored++
-		case "skip": run.Skipped++
+		case "pass":
+			run.Passed++
+		case "fail":
+			run.Failed++
+		case "error":
+			run.Errored++
+		case "skip":
+			run.Skipped++
 		}
 	}
 
 	if run.Mode == "parallel" && run.Concurrency > 1 {
-		runParallel(ctx, run, cases, baseURL, persister, pub, aggregate)
+		runParallel(ctx, run, cases, baseURL, persister, pub, updater, aggregate)
 	} else {
 		runSequential(ctx, run, cases, baseURL, persister, pub, updater, aggregate)
+	}
+
+	// Guard: don't overwrite a cancelled run's status.
+	if run.Status == "cancelled" {
+		finished := time.Now()
+		run.FinishedAt = &finished
+		logUpdateErr(updater.Update(ctx, run.ID, map[string]any{"finished_at": run.FinishedAt}))
+		return nil
 	}
 
 	finished := time.Now()
@@ -63,21 +76,21 @@ func Run(ctx context.Context, run *model.TestRun, cases []*model.TestCase, baseU
 	}
 
 	if pub != nil {
-		pub.Publish(ctx, &RunEvent{
+		logPubErr(pub.Publish(ctx, &RunEvent{
 			Type: "complete", RunID: run.ID,
 			Total: run.Total, Passed: run.Passed, Failed: run.Failed,
 			Errored: run.Errored, Skipped: run.Skipped,
 			Status: run.Status, Timestamp: time.Now().Unix(),
-		})
+		}))
 	}
 
-	updater.Update(ctx, run.ID, map[string]any{
+	logUpdateErr(updater.Update(ctx, run.ID, map[string]any{
 		"status":      run.Status,
 		"passed":      run.Passed,
 		"failed":      run.Failed,
 		"errored":     run.Errored,
 		"finished_at": run.FinishedAt,
-	})
+	}))
 
 	return nil
 }
@@ -87,12 +100,12 @@ func runSequential(ctx context.Context, run *model.TestRun, cases []*model.TestC
 		select {
 		case <-ctx.Done():
 			run.Status = "cancelled"
-			updater.Update(ctx, run.ID, map[string]any{"status": "cancelled", "finished_at": time.Now()})
+			logUpdateErr(updater.Update(ctx, run.ID, map[string]any{"status": "cancelled", "finished_at": time.Now()}))
 			if pub != nil {
-				pub.Publish(ctx, &RunEvent{
+				logPubErr(pub.Publish(ctx, &RunEvent{
 					Type: "complete", RunID: run.ID, Status: "cancelled",
 					Timestamp: time.Now().Unix(),
-				})
+				}))
 			}
 			return
 		default:
@@ -101,7 +114,7 @@ func runSequential(ctx context.Context, run *model.TestRun, cases []*model.TestC
 	}
 }
 
-func runParallel(ctx context.Context, run *model.TestRun, cases []*model.TestCase, baseURL string, persister ResultPersister, pub EventPublisher, aggregate func(string)) {
+func runParallel(ctx context.Context, run *model.TestRun, cases []*model.TestCase, baseURL string, persister ResultPersister, pub EventPublisher, updater RunUpdater, aggregate func(string)) {
 	sem := make(chan struct{}, run.Concurrency)
 	var wg sync.WaitGroup
 
@@ -109,8 +122,9 @@ func runParallel(ctx context.Context, run *model.TestRun, cases []*model.TestCas
 		select {
 		case <-ctx.Done():
 			run.Status = "cancelled"
+			logUpdateErr(updater.Update(ctx, run.ID, map[string]any{"status": "cancelled", "finished_at": time.Now()}))
 			if pub != nil {
-				pub.Publish(ctx, &RunEvent{Type: "complete", RunID: run.ID, Status: "cancelled", Timestamp: time.Now().Unix()})
+				logPubErr(pub.Publish(ctx, &RunEvent{Type: "complete", RunID: run.ID, Status: "cancelled", Timestamp: time.Now().Unix()}))
 			}
 			wg.Wait()
 			return
@@ -127,6 +141,18 @@ func runParallel(ctx context.Context, run *model.TestRun, cases []*model.TestCas
 	wg.Wait()
 }
 
+func logUpdateErr(err error) {
+	if err != nil {
+		log.Printf("runner: updater.Update: %v", err)
+	}
+}
+
+func logPubErr(err error) {
+	if err != nil {
+		log.Printf("runner: pub.Publish: %v", err)
+	}
+}
+
 func execOne(ctx context.Context, run *model.TestRun, tc *model.TestCase, baseURL string, persister ResultPersister, pub EventPublisher, aggregate func(string)) {
 	result := Execute(ctx, tc, baseURL)
 	result.RunID = run.ID
@@ -139,11 +165,11 @@ func execOne(ctx context.Context, run *model.TestRun, tc *model.TestCase, baseUR
 	aggregate(result.Status)
 
 	if pub != nil {
-		pub.Publish(ctx, &RunEvent{
+		logPubErr(pub.Publish(ctx, &RunEvent{
 			Type: "progress", RunID: run.ID,
 			Total: run.Total, Passed: run.Passed, Failed: run.Failed,
 			Errored: run.Errored, Skipped: run.Skipped,
 			Status: "running", Timestamp: time.Now().Unix(),
-		})
+		}))
 	}
 }
