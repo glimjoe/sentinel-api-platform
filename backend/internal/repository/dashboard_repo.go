@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"time"
 
 	"gorm.io/gorm"
 
@@ -52,7 +53,7 @@ func (r *DashboardRepo) ListRecentRuns(ctx context.Context, limit int) ([]servic
 		Errored   int    `gorm:"column:errored"`
 		Skipped   int    `gorm:"column:skipped"`
 		Total     int    `gorm:"column:total"`
-		CreatedAt string `gorm:"column:created_at"`
+		CreatedAt time.Time `gorm:"column:created_at"`
 	}
 	var rows []row
 	err := r.db.WithContext(ctx).
@@ -73,7 +74,8 @@ func (r *DashboardRepo) ListRecentRuns(ctx context.Context, limit int) ([]servic
 			Failed: r.Failed,
 			Errored: r.Errored,
 			Skipped: r.Skipped,
-			Total:  r.Total,
+			Total:     r.Total,
+			CreatedAt: r.CreatedAt,
 		}
 	}
 	return out, nil
