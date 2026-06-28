@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"fmt"
+	"sync"
 
 	"github.com/glimjoe/sentinel-api-platform/internal/model"
 	"github.com/glimjoe/sentinel-api-platform/internal/pkg/errs"
@@ -23,6 +24,7 @@ type TestRunService struct {
 	resultStore runner.ResultPersister
 	roles       projectRoleChecker
 	publisher   runner.EventPublisher
+	cancellers  sync.Map // runID → context.CancelFunc
 }
 
 func NewTestRunService(store testRunStore, caseStore testCaseStore, resultStore runner.ResultPersister, roles projectRoleChecker, pub runner.EventPublisher) *TestRunService {
@@ -69,11 +71,31 @@ func (s *TestRunService) Start(ctx context.Context, callerID, runID string) (*mo
 		return nil, errs.ErrBadRequest // no test cases to run
 	}
 
-	// Run synchronously for now (async via goroutine in handler)
-	if err := runner.Run(ctx, run, cases, run.TargetBaseURL, s.resultStore, s.store, s.publisher); err != nil {
+	runCtx, cancel := context.WithCancel(ctx)
+	s.cancellers.Store(runID, cancel)
+	defer func() {
+		s.cancellers.Delete(runID)
+		cancel()
+	}()
+
+	if err := runner.Run(runCtx, run, cases, run.TargetBaseURL, s.resultStore, s.store, s.publisher); err != nil {
 		return nil, err
 	}
 	return s.store.FindByID(ctx, runID)
+}
+
+func (s *TestRunService) Cancel(ctx context.Context, callerID, runID string) error {
+	run, err := s.store.FindByID(ctx, runID)
+	if err != nil {
+		return err
+	}
+	if run.Status != "running" && run.Status != "queued" {
+		return fmt.Errorf("run %s is %s, cannot cancel", runID, run.Status)
+	}
+	if cancel, ok := s.cancellers.Load(runID); ok {
+		cancel.(context.CancelFunc)()
+	}
+	return s.store.Update(ctx, runID, map[string]any{"status": "cancelled"})
 }
 
 func (s *TestRunService) FindByID(ctx context.Context, id string) (*model.TestRun, error) {

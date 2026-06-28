@@ -218,6 +218,9 @@ func run() error {
 	protected.GET("/projects/:pid/runs/:runId", middleware.RequireProjectRole(projectSvc,
 		model.ProjectRoleAdmin, model.ProjectRoleEngineer, model.ProjectRoleViewer),
 		testRunH.Get)
+		protected.POST("/projects/:pid/runs/:runId/cancel", middleware.RequireProjectRole(projectSvc,
+			model.ProjectRoleAdmin, model.ProjectRoleEngineer),
+			testRunH.Cancel)
 		protected.GET("/projects/:pid/runs/:runId/stream", middleware.RequireProjectRole(projectSvc,
 			model.ProjectRoleAdmin, model.ProjectRoleEngineer, model.ProjectRoleViewer),
 			testRunH.Stream)
