@@ -28,3 +28,7 @@ export function streamRun(pid: string, runId: string, onEvent: (e: RunEvent) => 
   es.onerror = () => es.close()
   return () => es.close()
 }
+
+export function getResults(pid: string, runId: string): Promise<TestResult[]> {
+  return api.get<any, TestResult[]>(`/projects/${pid}/runs/${runId}/results`)
+}

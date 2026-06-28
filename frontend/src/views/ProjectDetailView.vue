@@ -58,8 +58,11 @@
           <el-table-column prop="path" label="Path" min-width="160" />
           <el-table-column prop="name" label="Name" min-width="120" />
           <el-table-column prop="expected_status" label="Expect" width="70" />
-          <el-table-column label="Actions" width="80">
-            <template #default="{ row }"><el-button size="small" type="danger" @click="handleDeleteCase(row)">Del</el-button></template>
+          <el-table-column label="Actions" width="140">
+            <template #default="{ row }">
+              <el-button size="small" @click="openEditCase(row)">Edit</el-button>
+              <el-button size="small" type="danger" @click="handleDeleteCase(row)">Del</el-button>
+            </template>
           </el-table-column>
         </el-table>
       </el-tab-pane>
@@ -87,6 +90,7 @@
               <el-button v-if="row.status==='queued'" size="small" type="success" @click="handleStartRun(row)">Start</el-button>
               <el-button v-if="row.status==='running'" size="small" type="warning" @click="handleCancelRun(row)">Cancel</el-button>
               <el-button v-if="row.status==='running'" size="small" @click="watchRun(row)">Watch</el-button>
+              <el-button v-if="row.status==='success'||row.status==='failed'" size="small" @click="viewResults(row)">Results</el-button>
             </template>
           </el-table-column>
         </el-table>
@@ -139,6 +143,30 @@
       </div>
       <template #footer><el-button @click="closeProgress">Close</el-button></template>
     </el-dialog>
+
+    <!-- Edit Case Dialog -->
+    <el-dialog v-model="showEditCase" title="Edit Test Case" width="420px">
+      <el-form :model="editCaseForm" label-width="110px">
+        <el-form-item label="Name"><el-input v-model="editCaseForm.name" /></el-form-item>
+        <el-form-item label="Expected Status"><el-input-number v-model="editCaseForm.expected_status" :min="100" :max="599" /></el-form-item>
+      </el-form>
+      <template #footer><el-button @click="showEditCase = false">Cancel</el-button><el-button type="primary" :loading="savingCase" @click="handleSaveCase">Save</el-button></template>
+    </el-dialog>
+
+    <!-- Results Dialog -->
+    <el-dialog v-model="showResults" :title="'Results — ' + selectedRunName" width="600px">
+      <el-table :data="results" stripe size="small" max-height="400">
+        <el-table-column label="Status" width="70">
+          <template #default="{ row }"><el-tag :type="row.status==='pass'?'success':'danger'" size="small">{{ row.status }}</el-tag></template>
+        </el-table-column>
+        <el-table-column prop="actual_status" label="HTTP" width="60" />
+        <el-table-column prop="duration_ms" label="Time" width="70">
+          <template #default="{ row }">{{ row.duration_ms }}ms</template>
+        </el-table-column>
+        <el-table-column prop="error_msg" label="Error" min-width="160" />
+      </el-table>
+      <template #footer><el-button @click="showResults = false">Close</el-button></template>
+    </el-dialog>
   </div>
 </template>
 
@@ -148,8 +176,9 @@ import { useRoute } from 'vue-router'
 import { useProjectStore } from '@/stores/project'
 import { listAPIs, createAPI, deleteAPI, importOpenAPI } from '@/api/apis'
 import { listRules, deleteRule } from '@/api/mock_rules'
-import { listCases, createCase, deleteCase } from '@/api/test_cases'
-import { listRuns, createRun, startRun, cancelRun, streamRun } from '@/api/test_runs'
+import { listCases, createCase, deleteCase, getCase, updateCase } from '@/api/test_cases'
+import { listRuns, createRun, startRun, cancelRun, streamRun, getResults } from '@/api/test_runs'
+import type { TestResult } from '@/types/test_run'
 import type { API } from '@/types/api'
 import type { MockRule } from '@/types/mock_rule'
 import type { TestCase } from '@/types/test_case'
@@ -178,6 +207,10 @@ const showCreateRun = ref(false); const creatingRun = ref(false)
 const runForm = ref({ name: '', target_base_url: '' })
 const showProgress = ref(false); const progress = ref<RunEvent | null>(null)
 let closeStream: (() => void) | null = null
+const showEditCase = ref(false); const savingCase = ref(false)
+const editCaseForm = ref({ id: '', name: '', expected_status: 200 })
+const showResults = ref(false); const results = ref<TestResult[]>([])
+const selectedRunName = ref('')
 
 onMounted(async () => {
   loading.value = true
@@ -208,6 +241,25 @@ async function handleCancelRun(row: TestRun) { try { await cancelRun(pid, row.id
 function watchRun(row: TestRun) { showProgress.value = true; closeStream = streamRun(pid, row.id, (e) => { progress.value = e; if (e.type === 'complete') { refreshRuns() } }) }
 function closeProgress() { if (closeStream) closeStream(); showProgress.value = false; progress.value = null }
 async function refreshRuns() { runs.value = await listRuns(pid) }
+
+async function openEditCase(row: TestCase) {
+  const tc = await getCase(pid, row.id)
+  editCaseForm.value = { id: tc.id, name: tc.name, expected_status: tc.expected_status }
+  showEditCase.value = true
+}
+async function handleSaveCase() {
+  savingCase.value = true
+  try {
+    await updateCase(pid, editCaseForm.value.id, { name: editCaseForm.value.name, expected_status: editCaseForm.value.expected_status })
+    showEditCase.value = false
+    cases.value = await listCases(pid)
+  } finally { savingCase.value = false }
+}
+async function viewResults(row: TestRun) {
+  selectedRunName.value = row.name
+  results.value = await getResults(pid, row.id)
+  showResults.value = true
+}
 
 function methodColor(m: string) { const map: Record<string, string> = { GET: 'success', POST: 'primary', PUT: 'warning', PATCH: 'warning', DELETE: 'danger' }; return map[m] || 'info' }
 function runStatusColor(s: string) { const map: Record<string, string> = { queued: 'info', running: 'warning', success: 'success', failed: 'danger', cancelled: 'info' }; return map[s] || 'info' }
