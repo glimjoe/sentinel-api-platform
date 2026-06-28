@@ -24,6 +24,7 @@ import (
 	"github.com/glimjoe/sentinel-api-platform/internal/model"
 	"github.com/glimjoe/sentinel-api-platform/internal/pkg/errs"
 	"github.com/glimjoe/sentinel-api-platform/internal/pkg/httpx"
+	"github.com/glimjoe/sentinel-api-platform/internal/service"
 )
 
 func init() {
@@ -31,7 +32,7 @@ func init() {
 }
 
 type fakeMockRuleService struct {
-	CreateRuleFunc func(ctx context.Context, callerID, projectID, apiID string, spec CreateRuleSpec) (*model.MockRule, error)
+	CreateRuleFunc func(ctx context.Context, callerID, projectID, apiID string, spec service.CreateRuleSpec) (*model.MockRule, error)
 	GetRuleFunc    func(ctx context.Context, id string) (*model.MockRule, error)
 	UpdateRuleFunc func(ctx context.Context, callerID, projectID, ruleID string, fields map[string]any) (*model.MockRule, error)
 	DeleteRuleFunc func(ctx context.Context, callerID, projectID, ruleID string) error
@@ -40,7 +41,7 @@ type fakeMockRuleService struct {
 	ListHitsFunc   func(ctx context.Context, ruleID string) (int64, error)
 }
 
-func (f *fakeMockRuleService) CreateRule(ctx context.Context, callerID, projectID, apiID string, spec CreateRuleSpec) (*model.MockRule, error) {
+func (f *fakeMockRuleService) CreateRule(ctx context.Context, callerID, projectID, apiID string, spec service.CreateRuleSpec) (*model.MockRule, error) {
 	return f.CreateRuleFunc(ctx, callerID, projectID, apiID, spec)
 }
 
@@ -119,7 +120,7 @@ func doCreateRule(t *testing.T, r *gin.Engine, name, matchJSON string, responseS
 
 func TestCreateRule_HappyPath(t *testing.T) {
 	svc := &fakeMockRuleService{
-		CreateRuleFunc: func(_ context.Context, callerID, projectID, apiID string, spec CreateRuleSpec) (*model.MockRule, error) {
+		CreateRuleFunc: func(_ context.Context, callerID, projectID, apiID string, spec service.CreateRuleSpec) (*model.MockRule, error) {
 			if callerID != "u-engineer" {
 				t.Errorf("callerID = %q, want u-engineer", callerID)
 			}
@@ -138,7 +139,7 @@ func TestCreateRule_HappyPath(t *testing.T) {
 
 func TestCreateRule_Forbidden(t *testing.T) {
 	svc := &fakeMockRuleService{
-		CreateRuleFunc: func(_ context.Context, _, _, _ string, _ CreateRuleSpec) (*model.MockRule, error) {
+		CreateRuleFunc: func(_ context.Context, _, _, _ string, _ service.CreateRuleSpec) (*model.MockRule, error) {
 			return nil, errs.ErrForbidden
 		},
 	}

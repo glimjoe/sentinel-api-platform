@@ -131,12 +131,47 @@ func run() error {
 		model.ProjectRoleAdmin),
 		projectH.AddMember)
 
-	// API + MockRule services (M2-F.C/D — services constructed, handlers
-	// pending; the route mounting will land when those handlers exist).
+	// API + MockRule construction (M2-F.C/D). RBAC for API routes is enforced
+	// through RequireProjectRole middleware; MockRule routes delegate RBAC to
+	// the service layer because the rule ID alone doesn't carry project context.
 	apiRepo := repository.NewAPIRepo(db)
+	apiSvc := service.NewAPIService(apiRepo, projectSvc)
+	apiH := api.NewAPIHandler(apiSvc)
 	mockRuleRepo := repository.NewMockRuleRepo(db)
-	_ = service.NewAPIService(apiRepo, projectSvc)          // handler: M2-F.C
-	_ = service.NewMockRuleService(mockRuleRepo, projectSvc) // handler: M2-F.D
+	mockRuleSvc := service.NewMockRuleService(mockRuleRepo, projectSvc)
+	mockRuleH := api.NewMockRuleHandler(mockRuleSvc)
+
+	// API routes (M2-F.C) — scoped under projects/:pid with RBAC.
+	protected.POST("/projects/:pid/apis", middleware.RequireProjectRole(projectSvc,
+		model.ProjectRoleAdmin, model.ProjectRoleEngineer),
+		apiH.CreateAPI)
+	protected.GET("/projects/:pid/apis", middleware.RequireProjectRole(projectSvc,
+		model.ProjectRoleAdmin, model.ProjectRoleEngineer, model.ProjectRoleViewer),
+		apiH.ListAPIs)
+	protected.GET("/projects/:pid/apis/:apiId", middleware.RequireProjectRole(projectSvc,
+		model.ProjectRoleAdmin, model.ProjectRoleEngineer, model.ProjectRoleViewer),
+		apiH.GetAPI)
+	protected.PATCH("/projects/:pid/apis/:apiId", middleware.RequireProjectRole(projectSvc,
+		model.ProjectRoleAdmin, model.ProjectRoleEngineer),
+		apiH.UpdateAPI)
+	protected.DELETE("/projects/:pid/apis/:apiId", middleware.RequireProjectRole(projectSvc,
+		model.ProjectRoleAdmin),
+		apiH.DeleteAPI)
+	protected.POST("/projects/:pid/apis/:apiId/tags", middleware.RequireProjectRole(projectSvc,
+		model.ProjectRoleAdmin, model.ProjectRoleEngineer),
+		apiH.AddTag)
+	protected.DELETE("/projects/:pid/apis/:apiId/tags/:tag", middleware.RequireProjectRole(projectSvc,
+		model.ProjectRoleAdmin, model.ProjectRoleEngineer),
+		apiH.RemoveTag)
+
+	// MockRule routes (M2-F.D) — RBAC enforced at service layer.
+	protected.POST("/rules", mockRuleH.CreateRule)
+	protected.GET("/rules/:rid", mockRuleH.GetRule)
+	protected.PATCH("/rules/:rid", mockRuleH.UpdateRule)
+	protected.DELETE("/rules/:rid", mockRuleH.DeleteRule)
+	protected.GET("/apis/:apiId/rules", mockRuleH.ListRules)
+	protected.POST("/rules/:rid/hits", mockRuleH.RecordHit)
+	protected.GET("/rules/:rid/hits", mockRuleH.ListHits)
 
 	// Mock engine wiring (Phase 2 M1). The public /mock/:projectSlug/*path
 	// route is registered OUTSIDE the protected group — anyone with the

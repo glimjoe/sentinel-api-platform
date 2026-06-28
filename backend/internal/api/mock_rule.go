@@ -20,6 +20,7 @@ import (
 	"github.com/glimjoe/sentinel-api-platform/internal/middleware"
 	"github.com/glimjoe/sentinel-api-platform/internal/model"
 	"github.com/glimjoe/sentinel-api-platform/internal/pkg/httpx"
+	"github.com/glimjoe/sentinel-api-platform/internal/service"
 )
 
 // CreateRuleSpec is the request body for CreateRule.
@@ -37,7 +38,7 @@ type CreateRuleSpec struct {
 // mockRuleService is the contract MockRuleHandler needs from the service
 // layer. *service.MockRuleService satisfies it.
 type mockRuleService interface {
-	CreateRule(ctx context.Context, callerID, projectID, apiID string, spec CreateRuleSpec) (*model.MockRule, error)
+	CreateRule(ctx context.Context, callerID, projectID, apiID string, spec service.CreateRuleSpec) (*model.MockRule, error)
 	GetRule(ctx context.Context, id string) (*model.MockRule, error)
 	UpdateRule(ctx context.Context, callerID, projectID, ruleID string, fields map[string]any) (*model.MockRule, error)
 	DeleteRule(ctx context.Context, callerID, projectID, ruleID string) error
@@ -70,7 +71,17 @@ func (h *MockRuleHandler) CreateRule(c *gin.Context) {
 		return
 	}
 	callerID := c.GetString("user_id")
-	rule, err := h.svc.CreateRule(c.Request.Context(), callerID, "", apiID, req)
+	spec := service.CreateRuleSpec{
+		Name:            req.Name,
+		MatchJSON:       req.MatchJSON,
+		ResponseStatus:  req.ResponseStatus,
+		ResponseHeaders: req.ResponseHeaders,
+		ResponseBody:    req.ResponseBody,
+		ExtractorJSON:   req.ExtractorJSON,
+		Priority:        req.Priority,
+		DelayMs:         req.DelayMs,
+	}
+	rule, err := h.svc.CreateRule(c.Request.Context(), callerID, "", apiID, spec)
 	if err != nil {
 		middleware.WriteError(c, err)
 		return
