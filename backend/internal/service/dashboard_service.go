@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"log"
 	"time"
 )
 
@@ -46,13 +47,31 @@ func NewDashboardService(store DashboardStore) *DashboardService {
 }
 
 func (s *DashboardService) GetStats(ctx context.Context) (*DashboardStats, error) {
-	projects, _ := s.store.CountProjects(ctx)
-	apis, _ := s.store.CountAPIs(ctx)
-	rules, _ := s.store.CountMockRules(ctx)
-	cases, _ := s.store.CountTestCases(ctx)
+	projects, err := s.store.CountProjects(ctx)
+	if err != nil {
+		log.Printf("dashboard: CountProjects: %v", err)
+	}
+	apis, err := s.store.CountAPIs(ctx)
+	if err != nil {
+		log.Printf("dashboard: CountAPIs: %v", err)
+	}
+	rules, err := s.store.CountMockRules(ctx)
+	if err != nil {
+		log.Printf("dashboard: CountMockRules: %v", err)
+	}
+	cases, err := s.store.CountTestCases(ctx)
+	if err != nil {
+		log.Printf("dashboard: CountTestCases: %v", err)
+	}
 
-	runs, _ := s.store.ListRecentRuns(ctx, 10)
-	breakdown, _ := s.store.CountResultsByStatus(ctx)
+	runs, err := s.store.ListRecentRuns(ctx, 10)
+	if err != nil {
+		log.Printf("dashboard: ListRecentRuns: %v", err)
+	}
+	breakdown, err := s.store.CountResultsByStatus(ctx)
+	if err != nil {
+		log.Printf("dashboard: CountResultsByStatus: %v", err)
+	}
 
 	return &DashboardStats{
 		Projects:        projects,
