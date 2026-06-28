@@ -17,6 +17,7 @@ import (
 	"gorm.io/driver/mysql"
 	"gorm.io/gorm"
 
+	"github.com/glimjoe/sentinel-api-platform/internal/ai"
 	"github.com/glimjoe/sentinel-api-platform/internal/api"
 	"github.com/glimjoe/sentinel-api-platform/internal/middleware"
 	"github.com/glimjoe/sentinel-api-platform/internal/mock"
@@ -234,6 +235,26 @@ func run() error {
 		middleware.RequireProjectRole(projectSvc,
 			model.ProjectRoleAdmin, model.ProjectRoleEngineer, model.ProjectRoleViewer),
 		testRunH.Stream)
+
+	// AI module wiring (Phase 4).
+	aiRepo := repository.NewAiRepo(db)
+	aiProvider := ai.NewProvider(cfg.AI.Provider, cfg.AI.AnthropicKey, cfg.AI.OpenAIKey)
+	aiCache := ai.NewCache(rdb, time.Duration(cfg.AI.CacheTTLSeconds)*time.Second)
+	aiGuard := ai.NewGuard(aiRepo, cfg.AI.DailyLimitUSD, cfg.AI.MonthlyLimitUSD)
+	aiEngine := ai.NewEngine(aiProvider, aiCache, aiGuard, cfg.AI.MaxTokens, 0.3)
+	aiSvc := service.NewAIService(projectSvc, ai.NewAttributor(aiEngine), ai.NewCompleter(aiEngine), ai.NewPrioritizer(aiEngine), apiRepo, testCaseRepo)
+	aiH := api.NewAIHandler(aiSvc)
+
+	protected.POST("/projects/:pid/ai/attribution", middleware.RequireProjectRole(projectSvc,
+		model.ProjectRoleAdmin, model.ProjectRoleEngineer),
+		aiH.Attribute)
+	protected.POST("/projects/:pid/ai/complete", middleware.RequireProjectRole(projectSvc,
+		model.ProjectRoleAdmin, model.ProjectRoleEngineer),
+		aiH.Complete)
+	protected.POST("/projects/:pid/ai/prioritize", middleware.RequireProjectRole(projectSvc,
+		model.ProjectRoleAdmin, model.ProjectRoleEngineer),
+		aiH.Prioritize)
+	protected.GET("/ai/budget", aiH.Budget)
 
 	// Mock engine wiring (Phase 2 M1). The public /mock/:projectSlug/*path
 	// route is registered OUTSIDE the protected group — anyone with the
