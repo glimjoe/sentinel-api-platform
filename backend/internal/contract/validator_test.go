@@ -50,3 +50,24 @@ func TestSchemaFromJSON_AddsDollarSchema(t *testing.T) {
 		t.Error("output is not valid JSON")
 	}
 }
+
+func TestSchemaFromJSON_InvalidJSON(t *testing.T) {
+	_, err := SchemaFromJSON(json.RawMessage(`not json`))
+	if err == nil {
+		t.Error("expected error for invalid JSON input")
+	}
+}
+
+func TestValidateBody_InvalidSchema(t *testing.T) {
+	schema := json.RawMessage(`{"type":"object","properties":{"ok":{"type":"boolean"}}}`)
+	body := []byte(`{"ok":true}`)
+	_, err := ValidateBody(schema, body)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// Test with a malformed schema that gojsonschema itself rejects.
+	_, err = ValidateBody(json.RawMessage(`{invalid schema`), body)
+	if err == nil {
+		t.Error("expected system error for invalid schema JSON")
+	}
+}

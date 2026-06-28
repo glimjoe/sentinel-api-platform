@@ -389,3 +389,67 @@ func TestMockRuleService_HandlerAliases(t *testing.T) {
 		t.Fatalf("DeleteRule: %v", err)
 	}
 }
+
+func TestMockRuleService_Delete_RoleForError(t *testing.T) {
+	store := newFakeMockRuleStore()
+	roles := newFakeRoleChecker()
+	roles.err = errs.ErrNotFound
+	svc := NewMockRuleService(store, roles)
+
+	err := svc.Delete(context.Background(), "user-1", "proj-1", "rule-1")
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !errors.Is(err, errs.ErrNotFound) {
+		t.Errorf("err = %v, want ErrNotFound", err)
+	}
+}
+
+func TestMockRuleService_Create_WithEmptyMatchJSON(t *testing.T) {
+	store := newFakeMockRuleStore()
+	roles := newFakeRoleChecker()
+	roles.roleByUser["proj-1:user-1"] = model.ProjectRoleAdmin
+	svc := NewMockRuleService(store, roles)
+
+	rule, err := svc.Create(context.Background(), "user-1", "proj-1", "api-1", CreateRuleSpec{
+		Name: "test-rule", MatchJSON: json.RawMessage("{}"), ResponseStatus: 200, Priority: 100,
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if rule == nil {
+		t.Fatal("rule should not be nil")
+	}
+}
+
+func TestMockRuleService_Create_RoleForError(t *testing.T) {
+	store := newFakeMockRuleStore()
+	roles := newFakeRoleChecker()
+	roles.err = errs.ErrForbidden
+	svc := NewMockRuleService(store, roles)
+
+	_, err := svc.Create(context.Background(), "user-1", "proj-1", "api-1", CreateRuleSpec{
+		Name: "test", ResponseStatus: 200, Priority: 100, MatchJSON: json.RawMessage(`{}`),
+	})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !errors.Is(err, errs.ErrForbidden) {
+		t.Errorf("err = %v, want ErrForbidden", err)
+	}
+}
+
+func TestMockRuleService_Update_RoleForError(t *testing.T) {
+	store := newFakeMockRuleStore()
+	roles := newFakeRoleChecker()
+	roles.err = errs.ErrNotFound
+	svc := NewMockRuleService(store, roles)
+
+	_, err := svc.Update(context.Background(), "user-1", "proj-1", "rule-1", map[string]any{"name": "x"})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !errors.Is(err, errs.ErrNotFound) {
+		t.Errorf("err = %v, want ErrNotFound", err)
+	}
+}

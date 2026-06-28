@@ -102,3 +102,42 @@ func TestAIService_Budget(t *testing.T) {
 	assert.Equal(t, float64(0), daily["used"])
 	assert.Equal(t, float64(100), daily["limit"])
 }
+
+func TestAIService_Complete_WithAPIIDFilter(t *testing.T) {
+	svc := newTestAIService(t)
+
+	apiID := "api-1"
+	cases, err := svc.Complete(context.Background(), "user-1", "proj-1", &apiID)
+	require.NoError(t, err)
+	assert.NotEmpty(t, cases)
+}
+
+func TestAIService_Prioritize_WithCaseIDs(t *testing.T) {
+	svc := newTestAIService(t)
+
+	// Add a test case to filter by
+	store := svc.caseStore.(*fakeCaseStore)
+	store.rows["c1"] = &model.TestCase{ID: "c1", ProjectID: "proj-1", Name: "tc1"}
+
+	items, err := svc.Prioritize(context.Background(), "user-1", "proj-1", []string{"c1"})
+	require.NoError(t, err)
+	assert.NotEmpty(t, items)
+}
+
+func TestAIService_Attribute_RoleForError(t *testing.T) {
+	engine := ai.NewEngine(&ai.MockProvider{}, nil, ai.NewGuard(&fakeGuardStore{}, 100, 500), 1024, 0.3)
+	roles := newFakeRoleChecker()
+	roles.err = errs.ErrNotFound // simulate project not found
+	svc := NewAIService(roles,
+		ai.NewAttributor(engine),
+		ai.NewCompleter(engine),
+		ai.NewPrioritizer(engine),
+		&fakeAIAPIStore{apis: []*model.API{{ID: "api-1", Path: "/api/test", Method: "GET"}}},
+		newFakeCaseStore(),
+		ai.NewGuard(&fakeGuardStore{}, 100, 500),
+	)
+
+	_, err := svc.Attribute(context.Background(), "user-1", "proj-1", `{"status":"fail"}`)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, errs.ErrForbidden)
+}

@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"fmt"
 	"errors"
 	"testing"
 	"time"
@@ -122,5 +123,93 @@ func TestMockRuleRepo_IncrementHitCount_NotFound(t *testing.T) {
 	err := r.IncrementHitCount(context.Background(), "ghost")
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, errs.ErrNotFound))
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestMockRuleRepo_Update_Success(t *testing.T) {
+	gdb, mock := newMockGorm(t)
+	r := NewMockRuleRepo(gdb)
+
+	mock.ExpectBegin()
+	mock.ExpectExec("UPDATE `mock_rules`").
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+
+	err := r.Update(context.Background(), "01HMR", map[string]any{"name": "updated"})
+	require.NoError(t, err)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestMockRuleRepo_Update_NotFound(t *testing.T) {
+	gdb, mock := newMockGorm(t)
+	r := NewMockRuleRepo(gdb)
+
+	mock.ExpectBegin()
+	mock.ExpectExec("UPDATE `mock_rules`").
+		WillReturnResult(sqlmock.NewResult(0, 0)) // 0 rows affected
+	mock.ExpectCommit()
+
+	err := r.Update(context.Background(), "ghost", map[string]any{"name": "x"})
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, errs.ErrNotFound))
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestMockRuleRepo_Update_Error(t *testing.T) {
+	gdb, mock := newMockGorm(t)
+	r := NewMockRuleRepo(gdb)
+
+	mock.ExpectBegin()
+	mock.ExpectExec("UPDATE `mock_rules`").
+		WillReturnError(fmt.Errorf("db down"))
+	mock.ExpectRollback()
+
+	err := r.Update(context.Background(), "01HMR", map[string]any{"name": "x"})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "update mock_rule")
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestMockRuleRepo_Delete_Success(t *testing.T) {
+	gdb, mock := newMockGorm(t)
+	r := NewMockRuleRepo(gdb)
+
+	mock.ExpectBegin()
+	mock.ExpectExec("DELETE FROM `mock_rules` WHERE id = \\?").
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+
+	err := r.Delete(context.Background(), "01HMR")
+	require.NoError(t, err)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestMockRuleRepo_Delete_NotFound(t *testing.T) {
+	gdb, mock := newMockGorm(t)
+	r := NewMockRuleRepo(gdb)
+
+	mock.ExpectBegin()
+	mock.ExpectExec("DELETE FROM `mock_rules` WHERE id = \\?").
+		WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectCommit()
+
+	err := r.Delete(context.Background(), "ghost")
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, errs.ErrNotFound))
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestMockRuleRepo_Delete_Error(t *testing.T) {
+	gdb, mock := newMockGorm(t)
+	r := NewMockRuleRepo(gdb)
+
+	mock.ExpectBegin()
+	mock.ExpectExec("DELETE FROM `mock_rules` WHERE id = \\?").
+		WillReturnError(fmt.Errorf("db down"))
+	mock.ExpectRollback()
+
+	err := r.Delete(context.Background(), "01HMR")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "delete mock_rule")
 	require.NoError(t, mock.ExpectationsWereMet())
 }

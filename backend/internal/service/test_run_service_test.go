@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -175,4 +176,47 @@ func TestTestRunService_SetPostExecuteHook(t *testing.T) {
 
 	svc.hook(context.Background(), &model.TestRun{}, &model.TestResult{})
 	assert.True(t, called)
+}
+
+func TestTestRunService_Start_NotFound(t *testing.T) {
+	svc := NewTestRunService(newFakeRunStore(), newFakeCaseStore(), &fakeResultStore{}, newFakeRoleChecker(), &fakeEventPublisher{})
+
+	_, err := svc.Start(context.Background(), "user-1", "missing-run")
+	require.Error(t, err)
+	assert.ErrorIs(t, err, errs.ErrNotFound)
+}
+
+func TestTestRunService_Start_AlreadyStarted(t *testing.T) {
+	store := newFakeRunStore()
+	store.rows["run-1"] = &model.TestRun{ID: "run-1", ProjectID: "proj-1", Status: "running"}
+	svc := NewTestRunService(store, newFakeCaseStore(), &fakeResultStore{}, newFakeRoleChecker(), &fakeEventPublisher{})
+
+	_, err := svc.Start(context.Background(), "user-1", "run-1")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "already running")
+}
+
+func TestTestRunService_Start_NoCases(t *testing.T) {
+	store := newFakeRunStore()
+	store.rows["run-1"] = &model.TestRun{ID: "run-1", ProjectID: "proj-1", Status: "queued"}
+	// caseStore is empty — ListByProject returns empty slice
+	svc := NewTestRunService(store, newFakeCaseStore(), &fakeResultStore{}, newFakeRoleChecker(), &fakeEventPublisher{})
+
+	_, err := svc.Start(context.Background(), "user-1", "run-1")
+	require.Error(t, err)
+	assert.ErrorIs(t, err, errs.ErrBadRequest)
+}
+
+func TestTestRunService_Create_RoleForError(t *testing.T) {
+	roles := newFakeRoleChecker()
+	roles.err = errs.ErrNotFound
+	svc := NewTestRunService(newFakeRunStore(), newFakeCaseStore(), &fakeResultStore{}, roles, &fakeEventPublisher{})
+
+	_, err := svc.Create(context.Background(), "user-1", "proj-1", "test", "http://example.com", "sequential")
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !errors.Is(err, errs.ErrNotFound) {
+		t.Errorf("err = %v, want ErrNotFound", err)
+	}
 }

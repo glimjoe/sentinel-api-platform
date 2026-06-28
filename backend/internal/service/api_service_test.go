@@ -254,3 +254,63 @@ func TestAPIService_Delete_ViewerForbidden(t *testing.T) {
 		t.Errorf("err = %v, want ErrForbidden", err)
 	}
 }
+func TestAPIService_FindByID_HappyPath(t *testing.T) {
+	apis := newFakeAPIStore()
+	apis.rows["api-1"] = &model.API{ID: "api-1", Name: "Test API", Method: "GET", Path: "/x", ProjectID: "proj-1"}
+	svc := NewAPIService(apis, newFakeRoleChecker())
+
+	a, err := svc.FindByID(context.Background(), "api-1")
+	if err != nil {
+		t.Fatalf("FindByID: %v", err)
+	}
+	if a.Name != "Test API" {
+		t.Errorf("Name = %q, want 'Test API'", a.Name)
+	}
+}
+
+func TestAPIService_Update_HappyPath(t *testing.T) {
+	apis, roles := newFakeAPIStore(), newFakeRoleChecker()
+	roles.roleByUser["proj-1:user-1"] = model.ProjectRoleAdmin
+	svc := NewAPIService(apis, roles)
+	a, _ := svc.Create(context.Background(), "user-1", "proj-1", "Old", "GET", "/x", "")
+
+	updated, err := svc.Update(context.Background(), "user-1", a.ID, map[string]any{"name": "New"})
+	if err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	if updated.Name != "New" {
+		t.Errorf("Name = %q, want New", updated.Name)
+	}
+}
+
+func TestAPIService_Update_NotFound(t *testing.T) {
+	svc := NewAPIService(newFakeAPIStore(), newFakeRoleChecker())
+	_, err := svc.Update(context.Background(), "user-1", "missing", map[string]any{"name": "x"})
+	if !errors.Is(err, errs.ErrNotFound) {
+		t.Errorf("err = %v, want ErrNotFound", err)
+	}
+}
+
+func TestAPIService_Update_Forbidden(t *testing.T) {
+	apis, roles := newFakeAPIStore(), newFakeRoleChecker()
+	roles.roleByUser["proj-1:user-1"] = model.ProjectRoleViewer
+	apis.rows["api-1"] = &model.API{ID: "api-1", Name: "T", Method: "GET", Path: "/x", ProjectID: "proj-1"}
+	svc := NewAPIService(apis, roles)
+
+	_, err := svc.Update(context.Background(), "user-1", "api-1", map[string]any{"name": "x"})
+	if !errors.Is(err, errs.ErrForbidden) {
+		t.Errorf("err = %v, want ErrForbidden", err)
+	}
+}
+
+func TestAPIService_Update_RoleForError(t *testing.T) {
+	apis, roles := newFakeAPIStore(), newFakeRoleChecker()
+	roles.err = errs.ErrNotFound // simulate project not found via RoleFor
+	apis.rows["api-1"] = &model.API{ID: "api-1", Name: "T", Method: "GET", Path: "/x", ProjectID: "proj-1"}
+	svc := NewAPIService(apis, roles)
+
+	_, err := svc.Update(context.Background(), "user-1", "api-1", map[string]any{"name": "x"})
+	if err == nil {
+		t.Error("expected error from RoleFor")
+	}
+}

@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"fmt"
 	"errors"
 	"testing"
 	"time"
@@ -106,5 +107,83 @@ func TestProjectRepo_AddMember_Success(t *testing.T) {
 		ProjectID: "01HP", UserID: "01HU", Role: model.ProjectRoleAdmin,
 	})
 	require.NoError(t, err)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestProjectRepo_FindByID_Found(t *testing.T) {
+	gdb, mock := newMockGorm(t)
+	r := NewProjectRepo(gdb)
+
+	now := time.Now()
+	mock.ExpectQuery("SELECT \\* FROM `projects` WHERE id = \\?").
+		WillReturnRows(sqlmock.NewRows([]string{"id", "name", "slug", "owner_id", "created_at", "updated_at"}).
+			AddRow("01HXXXXXXXXXXXXXXXXXXXXXXXX", "Found", "found",
+				"01HU", now, now))
+
+	p, err := r.FindByID(context.Background(), "01HXXXXXXXXXXXXXXXXXXXXXXXX")
+	require.NoError(t, err)
+	assert.Equal(t, "Found", p.Name)
+	assert.Equal(t, "found", p.Slug)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestProjectRepo_Delete_Success(t *testing.T) {
+	gdb, mock := newMockGorm(t)
+	r := NewProjectRepo(gdb)
+
+	mock.ExpectBegin()
+	mock.ExpectExec("DELETE FROM `projects` WHERE id = \\?").
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+
+	err := r.Delete(context.Background(), "01HP")
+	require.NoError(t, err)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestProjectRepo_Delete_Error(t *testing.T) {
+	gdb, mock := newMockGorm(t)
+	r := NewProjectRepo(gdb)
+
+	mock.ExpectBegin()
+	mock.ExpectExec("DELETE FROM `projects` WHERE id = \\?").
+		WillReturnError(fmt.Errorf("db down"))
+	mock.ExpectRollback()
+
+	err := r.Delete(context.Background(), "01HP")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "delete project")
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestProjectRepo_Update_Success(t *testing.T) {
+	gdb, mock := newMockGorm(t)
+	r := NewProjectRepo(gdb)
+
+	// GORM Save issues an UPDATE
+	mock.ExpectBegin()
+	mock.ExpectExec("UPDATE `projects`").
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+
+	err := r.Update(context.Background(), &model.Project{
+		ID: "01HP", Name: "Updated", Slug: "updated", OwnerID: "01HU",
+	})
+	require.NoError(t, err)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestProjectRepo_Update_Error(t *testing.T) {
+	gdb, mock := newMockGorm(t)
+	r := NewProjectRepo(gdb)
+
+	mock.ExpectBegin()
+	mock.ExpectExec("UPDATE `projects`").
+		WillReturnError(fmt.Errorf("db down"))
+	mock.ExpectRollback()
+
+	err := r.Update(context.Background(), &model.Project{ID: "01HP"})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "update project")
 	require.NoError(t, mock.ExpectationsWereMet())
 }
