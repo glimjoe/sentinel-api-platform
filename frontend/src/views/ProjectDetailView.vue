@@ -2,64 +2,94 @@
   <div class="project-detail" v-loading="loading">
     <div class="header">
       <h2>{{ project?.name }}</h2>
-      <el-tag v-if="project">{{ project.slug }}</el-tag>
+      <el-tag>{{ project?.slug }}</el-tag>
     </div>
-    <p class="desc">{{ project?.description }}</p>
 
     <el-tabs v-model="activeTab">
+      <!-- APIs -->
       <el-tab-pane label="APIs" name="apis">
         <div class="tab-header">
           <span>{{ apis.length }} API(s)</span>
-          <el-button type="primary" size="small" @click="showCreateAPI = true">Add API</el-button>
+          <div>
+            <el-button type="primary" size="small" @click="showCreateAPI = true">Add API</el-button>
+            <el-upload :auto-upload="false" :show-file-list="false" accept=".json,.yaml,.yml" @change="handleImport" style="display:inline;margin-left:8px">
+              <el-button size="small" :loading="importing">Import OpenAPI</el-button>
+            </el-upload>
+          </div>
         </div>
         <el-table :data="apis" stripe size="small">
           <el-table-column label="Method" width="80">
-            <template #default="{ row }">
-              <el-tag :type="methodColor(row.method)" size="small">{{ row.method }}</el-tag>
-            </template>
+            <template #default="{ row }"><el-tag :type="methodColor(row.method)" size="small">{{ row.method }}</el-tag></template>
           </el-table-column>
           <el-table-column prop="path" label="Path" min-width="180" />
           <el-table-column prop="name" label="Name" min-width="130" />
-          <el-table-column prop="source" label="Source" width="90" />
           <el-table-column label="Actions" width="80">
-            <template #default="{ row }">
-              <el-button size="small" type="danger" @click="handleDeleteAPI(row)">Del</el-button>
-            </template>
+            <template #default="{ row }"><el-button size="small" type="danger" @click="handleDeleteAPI(row)">Del</el-button></template>
           </el-table-column>
         </el-table>
-
-        <!-- Import OpenAPI -->
-        <el-divider />
-        <el-upload :auto-upload="false" :show-file-list="false" accept=".json,.yaml,.yml"
-          @change="handleImport">
-          <el-button size="small" :loading="importing">Import OpenAPI Spec</el-button>
-        </el-upload>
       </el-tab-pane>
 
+      <!-- Mock Rules -->
       <el-tab-pane label="Mock Rules" name="rules">
-        <div class="tab-header">
-          <span>Select an API to manage its rules</span>
-        </div>
-        <el-select v-model="selectedApiId" placeholder="Choose API" @change="fetchRules" style="width:300px;margin-bottom:12px">
+        <el-select v-model="selectedApiId" placeholder="Choose API" @change="fetchRules" style="width:320px;margin-bottom:12px">
           <el-option v-for="a in apis" :key="a.id" :label="`${a.method} ${a.path}`" :value="a.id" />
         </el-select>
-
         <el-table v-if="rules.length" :data="rules" stripe size="small">
           <el-table-column prop="name" label="Name" min-width="140" />
           <el-table-column prop="response_status" label="Status" width="70" />
-          <el-table-column prop="priority" label="Priority" width="70" />
-          <el-table-column label="Enabled" width="80">
+          <el-table-column prop="priority" label="Prio" width="60" />
+          <el-table-column label="Actions" width="80">
+            <template #default="{ row }"><el-button size="small" type="danger" @click="handleDeleteRule(row)">Del</el-button></template>
+          </el-table-column>
+        </el-table>
+        <el-empty v-else-if="selectedApiId" description="No rules" />
+      </el-tab-pane>
+
+      <!-- Test Cases -->
+      <el-tab-pane label="Test Cases" name="cases">
+        <div class="tab-header">
+          <span>{{ cases.length }} case(s)</span>
+          <el-button type="primary" size="small" @click="showCreateCase = true">New Case</el-button>
+        </div>
+        <el-table :data="cases" stripe size="small">
+          <el-table-column label="Method" width="80">
+            <template #default="{ row }"><el-tag :type="methodColor(row.method)" size="small">{{ row.method }}</el-tag></template>
+          </el-table-column>
+          <el-table-column prop="path" label="Path" min-width="160" />
+          <el-table-column prop="name" label="Name" min-width="120" />
+          <el-table-column prop="expected_status" label="Expect" width="70" />
+          <el-table-column label="Actions" width="80">
+            <template #default="{ row }"><el-button size="small" type="danger" @click="handleDeleteCase(row)">Del</el-button></template>
+          </el-table-column>
+        </el-table>
+      </el-tab-pane>
+
+      <!-- Test Runs -->
+      <el-tab-pane label="Test Runs" name="runs">
+        <div class="tab-header">
+          <span>{{ runs.length }} run(s)</span>
+          <el-button type="primary" size="small" @click="showCreateRun = true">New Run</el-button>
+        </div>
+        <el-table :data="runs" stripe size="small">
+          <el-table-column prop="name" label="Name" min-width="140" />
+          <el-table-column prop="status" label="Status" width="90">
+            <template #default="{ row }"><el-tag :type="runStatusColor(row.status)" size="small">{{ row.status }}</el-tag></template>
+          </el-table-column>
+          <el-table-column label="Progress" min-width="160">
             <template #default="{ row }">
-              <el-switch :model-value="row.enabled" disabled size="small" />
+              <el-progress :percentage="runPercent(row)" :color="row.status==='failed'?'#f56c6c':'#67c23a'" :stroke-width="16">
+                <span style="font-size:11px">{{ row.passed }}/{{ row.total }}</span>
+              </el-progress>
             </template>
           </el-table-column>
-          <el-table-column label="Actions" width="80">
+          <el-table-column label="Actions" width="160">
             <template #default="{ row }">
-              <el-button size="small" type="danger" @click="handleDeleteRule(row)">Del</el-button>
+              <el-button v-if="row.status==='queued'" size="small" type="success" @click="handleStartRun(row)">Start</el-button>
+              <el-button v-if="row.status==='running'" size="small" type="warning" @click="handleCancelRun(row)">Cancel</el-button>
+              <el-button v-if="row.status==='running'" size="small" @click="watchRun(row)">Watch</el-button>
             </template>
           </el-table-column>
         </el-table>
-        <el-empty v-else-if="selectedApiId" description="No rules for this API" />
       </el-tab-pane>
     </el-tabs>
 
@@ -67,17 +97,47 @@
     <el-dialog v-model="showCreateAPI" title="Add API" width="400px">
       <el-form :model="apiForm" label-width="80px">
         <el-form-item label="Name"><el-input v-model="apiForm.name" /></el-form-item>
-        <el-form-item label="Method">
-          <el-select v-model="apiForm.method">
-            <el-option v-for="m in methods" :key="m" :label="m" :value="m" />
-          </el-select>
-        </el-form-item>
+        <el-form-item label="Method"><el-select v-model="apiForm.method"><el-option v-for="m in methods" :key="m" :label="m" :value="m" /></el-select></el-form-item>
         <el-form-item label="Path"><el-input v-model="apiForm.path" placeholder="/pets" /></el-form-item>
       </el-form>
-      <template #footer>
-        <el-button @click="showCreateAPI = false">Cancel</el-button>
-        <el-button type="primary" :loading="creatingAPI" @click="handleCreateAPI">Create</el-button>
-      </template>
+      <template #footer><el-button @click="showCreateAPI = false">Cancel</el-button><el-button type="primary" :loading="creatingAPI" @click="handleCreateAPI">Create</el-button></template>
+    </el-dialog>
+
+    <!-- Create Case Dialog -->
+    <el-dialog v-model="showCreateCase" title="New Test Case" width="450px">
+      <el-form :model="caseForm" label-width="90px">
+        <el-form-item label="Name"><el-input v-model="caseForm.name" placeholder="Get pets" /></el-form-item>
+        <el-form-item label="Method"><el-select v-model="caseForm.method"><el-option v-for="m in methods" :key="m" :label="m" :value="m" /></el-select></el-form-item>
+        <el-form-item label="Path"><el-input v-model="caseForm.path" placeholder="/pets" /></el-form-item>
+        <el-form-item label="Expected Status"><el-input-number v-model="caseForm.expected_status" :min="100" :max="599" /></el-form-item>
+      </el-form>
+      <template #footer><el-button @click="showCreateCase = false">Cancel</el-button><el-button type="primary" :loading="creatingCase" @click="handleCreateCase">Create</el-button></template>
+    </el-dialog>
+
+    <!-- Create Run Dialog -->
+    <el-dialog v-model="showCreateRun" title="New Test Run" width="420px">
+      <el-form :model="runForm" label-width="110px">
+        <el-form-item label="Name"><el-input v-model="runForm.name" placeholder="Smoke test" /></el-form-item>
+        <el-form-item label="Target Base URL"><el-input v-model="runForm.target_base_url" placeholder="http://localhost:8081/mock/petstore" /></el-form-item>
+      </el-form>
+      <template #footer><el-button @click="showCreateRun = false">Cancel</el-button><el-button type="primary" :loading="creatingRun" @click="handleCreateRun">Create</el-button></template>
+    </el-dialog>
+
+    <!-- Run Progress Dialog (SSE) -->
+    <el-dialog v-model="showProgress" title="Run Progress" width="480px" :close-on-click-modal="false">
+      <div v-if="progress" class="progress-box">
+        <el-progress :percentage="runPercent(progress)" :color="progress.status==='failed'?'#f56c6c':'#67c23a'" :stroke-width="20">
+          <span>{{ progress.passed }}/{{ progress.total }}</span>
+        </el-progress>
+        <div class="stats">
+          <el-tag type="success">Pass: {{ progress.passed }}</el-tag>
+          <el-tag type="danger">Fail: {{ progress.failed }}</el-tag>
+          <el-tag type="warning">Error: {{ progress.errored }}</el-tag>
+        </div>
+        <div v-if="progress.status==='success'" class="result success">All passed!</div>
+        <div v-if="progress.status==='failed'" class="result failed">Run failed</div>
+      </div>
+      <template #footer><el-button @click="closeProgress">Close</el-button></template>
     </el-dialog>
   </div>
 </template>
@@ -88,8 +148,12 @@ import { useRoute } from 'vue-router'
 import { useProjectStore } from '@/stores/project'
 import { listAPIs, createAPI, deleteAPI, importOpenAPI } from '@/api/apis'
 import { listRules, deleteRule } from '@/api/mock_rules'
+import { listCases, createCase, deleteCase } from '@/api/test_cases'
+import { listRuns, createRun, startRun, cancelRun, streamRun } from '@/api/test_runs'
 import type { API } from '@/types/api'
 import type { MockRule } from '@/types/mock_rule'
+import type { TestCase } from '@/types/test_case'
+import type { TestRun, RunEvent } from '@/types/test_run'
 import { ElMessage } from 'element-plus'
 
 const route = useRoute()
@@ -101,13 +165,19 @@ const loading = ref(false)
 const activeTab = ref('apis')
 const apis = ref<API[]>([])
 const rules = ref<MockRule[]>([])
+const cases = ref<TestCase[]>([])
+const runs = ref<TestRun[]>([])
 const selectedApiId = ref('')
+const methods = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE']
 
-const showCreateAPI = ref(false)
-const creatingAPI = ref(false)
-const importing = ref(false)
-const methods = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS']
-const apiForm = ref({ name: '', method: 'GET' as string, path: '' })
+const showCreateAPI = ref(false); const creatingAPI = ref(false); const importing = ref(false)
+const apiForm = ref({ name: '', method: 'GET', path: '' })
+const showCreateCase = ref(false); const creatingCase = ref(false)
+const caseForm = ref({ name: '', method: 'GET', path: '', expected_status: 200 })
+const showCreateRun = ref(false); const creatingRun = ref(false)
+const runForm = ref({ name: '', target_base_url: '' })
+const showProgress = ref(false); const progress = ref<RunEvent | null>(null)
+let closeStream: (() => void) | null = null
 
 onMounted(async () => {
   loading.value = true
@@ -115,62 +185,42 @@ onMounted(async () => {
     await store.fetchOne(pid)
     project.value = store.current
     apis.value = await listAPIs(pid)
-  } finally {
-    loading.value = false
-  }
+    cases.value = await listCases(pid)
+    runs.value = await listRuns(pid)
+  } finally { loading.value = false }
 })
 
-async function handleCreateAPI() {
-  creatingAPI.value = true
-  try {
-    const a = await createAPI(pid, apiForm.value)
-    apis.value.push(a)
-    showCreateAPI.value = false
-    apiForm.value = { name: '', method: 'GET', path: '' }
-  } finally { creatingAPI.value = false }
-}
+// APIs
+async function handleCreateAPI() { creatingAPI.value = true; try { apis.value.push(await createAPI(pid, apiForm.value)); showCreateAPI.value = false; apiForm.value = { name: '', method: 'GET', path: '' } } finally { creatingAPI.value = false } }
+async function handleDeleteAPI(row: API) { try { await deleteAPI(pid, row.id); apis.value = apis.value.filter(a => a.id !== row.id) } catch { /* */ } }
+async function handleImport(file: any) { importing.value = true; try { const r = new FileReader(); r.onload = async (e) => { await importOpenAPI(pid, e.target?.result as string); apis.value = await listAPIs(pid); importing.value = false }; r.readAsText(file.raw) } catch { importing.value = false } }
+async function fetchRules() { if (selectedApiId.value) rules.value = await listRules(selectedApiId.value) }
+async function handleDeleteRule(row: MockRule) { await deleteRule(row.id); rules.value = rules.value.filter(r => r.id !== row.id) }
 
-async function handleDeleteAPI(row: API) {
-  try {
-    await deleteAPI(pid, row.id)
-    apis.value = apis.value.filter(a => a.id !== row.id)
-  } catch { /* handled */ }
-}
+// Test Cases
+async function handleCreateCase() { creatingCase.value = true; try { cases.value.push(await createCase(pid, caseForm.value)); showCreateCase.value = false; caseForm.value = { name: '', method: 'GET', path: '', expected_status: 200 } } finally { creatingCase.value = false } }
+async function handleDeleteCase(row: TestCase) { try { await deleteCase(pid, row.id); cases.value = cases.value.filter(c => c.id !== row.id) } catch { /* */ } }
 
-async function handleImport(file: any) {
-  importing.value = true
-  try {
-    const reader = new FileReader()
-    reader.onload = async (e) => {
-      const text = e.target?.result as string
-      const result = await importOpenAPI(pid, text)
-      ElMessage.success(`Imported ${result.imported} of ${result.total} APIs`)
-      apis.value = await listAPIs(pid)
-      importing.value = false
-    }
-    reader.readAsText(file.raw)
-  } catch { importing.value = false }
-}
+// Test Runs
+async function handleCreateRun() { creatingRun.value = true; try { runs.value.unshift(await createRun(pid, runForm.value)); showCreateRun.value = false; runForm.value = { name: '', target_base_url: '' } } finally { creatingRun.value = false } }
+async function handleStartRun(row: TestRun) { try { await startRun(pid, row.id); await refreshRuns() } catch { /* */ } }
+async function handleCancelRun(row: TestRun) { try { await cancelRun(pid, row.id); await refreshRuns() } catch { /* */ } }
+function watchRun(row: TestRun) { showProgress.value = true; closeStream = streamRun(pid, row.id, (e) => { progress.value = e; if (e.type === 'complete') { refreshRuns() } }) }
+function closeProgress() { if (closeStream) closeStream(); showProgress.value = false; progress.value = null }
+async function refreshRuns() { runs.value = await listRuns(pid) }
 
-async function fetchRules() {
-  if (!selectedApiId.value) return
-  rules.value = await listRules(selectedApiId.value)
-}
-
-async function handleDeleteRule(row: MockRule) {
-  await deleteRule(row.id)
-  rules.value = rules.value.filter(r => r.id !== row.id)
-}
-
-function methodColor(m: string) {
-  const map: Record<string, string> = { GET: 'success', POST: 'primary', PUT: 'warning', PATCH: 'warning', DELETE: 'danger' }
-  return map[m] || 'info'
-}
+function methodColor(m: string) { const map: Record<string, string> = { GET: 'success', POST: 'primary', PUT: 'warning', PATCH: 'warning', DELETE: 'danger' }; return map[m] || 'info' }
+function runStatusColor(s: string) { const map: Record<string, string> = { queued: 'info', running: 'warning', success: 'success', failed: 'danger', cancelled: 'info' }; return map[s] || 'info' }
+function runPercent(r: { total: number; passed: number }) { return r.total ? Math.round((r.passed / r.total) * 100) : 0 }
 </script>
 
 <style scoped>
-.header { display: flex; align-items: center; gap: 12px; margin-bottom: 8px; }
-.desc { color: #666; margin-bottom: 16px; }
+.header { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; }
 h2 { margin: 0; }
 .tab-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
+.progress-box { text-align: center; }
+.stats { display: flex; gap: 8px; justify-content: center; margin-top: 16px; }
+.result { margin-top: 16px; font-size: 16px; font-weight: bold; }
+.success { color: #67c23a; }
+.failed { color: #f56c6c; }
 </style>
