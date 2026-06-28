@@ -91,6 +91,9 @@ func run() error {
 	if cfg.App.Env == "production" {
 		gin.SetMode(gin.ReleaseMode)
 	}
+	// ADR-0008: Secure cookies only in production.
+	middleware.SetCookieConfig(cfg.App.Env == "production", "")
+
 	r := gin.New()
 	r.Use(middleware.RequestID())
 	r.Use(middleware.AccessLog(log))
@@ -105,15 +108,21 @@ func run() error {
 	r.GET("/api/v1/healthz", healthH.Healthz)
 	r.GET("/api/v1/readyz", healthH.Readyz)
 
-	// Auth wiring (Phase 1).
+	// Auth wiring (Phase 1, cookie-based per ADR-0008).
 	userRepo := repository.NewUserRepo(db)
 	refreshTokenRepo := repository.NewRefreshTokenRepo(db)
 	authSvc := service.NewAuthService(userRepo, refreshTokenRepo, cfg.Auth.AccessSecret, cfg.Auth.AccessTTL, cfg.Auth.BcryptCost)
 	authH := api.NewAuthHandler(authSvc)
+
+	// Public auth endpoints (no CSRF).
 	r.POST("/api/v1/auth/register", authH.Register)
 	r.POST("/api/v1/auth/login", authH.Login)
 	r.POST("/api/v1/auth/refresh", authH.Refresh)
-	protected := r.Group("/api/v1", middleware.AuthRequired(cfg.Auth.AccessSecret))
+
+	// Protected group — CSRF → cookie auth (ADR-0008).
+	protected := r.Group("/api/v1")
+	protected.Use(middleware.CSRFRequired())
+	protected.Use(middleware.CookieAuthRequired(cfg.Auth.AccessSecret))
 	protected.GET("/auth/me", authH.Me)
 	protected.POST("/auth/logout", authH.Logout)
 

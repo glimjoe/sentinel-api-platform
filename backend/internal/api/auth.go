@@ -1,14 +1,15 @@
-// Package api — auth handlers (Phase 1, migrated to httpx in M2-F.B).
+// Package api — auth handlers (Phase 1, cookie-based auth per ADR-0008).
 //
 // Endpoints:
-//   POST /api/v1/auth/register   { email, password, display_name? }   → 200 { user, access_token }
-//   POST /api/v1/auth/login      { email, password }                 → 200 { user, access_token }
-//   GET  /api/v1/auth/me         (auth required)                     → 200 { user }
 //
-// All responses go through httpx.OK / middleware.WriteError so the
-// envelope is uniform. The previous writeAuthError local switcher was
-// removed — middleware.WriteError is the single source of truth for
-// the errs → HTTP mapping.
+//	POST /api/v1/auth/register   { email, password, display_name? }   → 200 { user }
+//	POST /api/v1/auth/login      { email, password }                 → 200 { user }
+//	GET  /api/v1/auth/me         (auth required)                     → 200 { user }
+//	POST /api/v1/auth/refresh    (reads sent_refresh cookie)         → 200 { user }
+//	POST /api/v1/auth/logout     (auth required, clears cookies)
+//
+// All auth responses set httpOnly cookies (sent_access, sent_refresh) plus a
+// readable CSRF token cookie (sent_csrf) per ADR-0008.
 package api
 
 import (
@@ -45,51 +46,50 @@ type loginRequest struct {
 }
 
 // authResponse is the success payload for Register / Login / Refresh.
+// ADR-0008: tokens are set as httpOnly cookies, so the body only returns user.
 type authResponse struct {
-	User         any    `json:"user"`
-	AccessToken  string `json:"access_token"`
-	RefreshToken string `json:"refresh_token"`
-	TokenType    string `json:"token_type"`
+	User interface{} `json:"user"`
 }
 
 // Register handles POST /auth/register.
+// Sets sent_access, sent_refresh (httpOnly), and sent_csrf (readable) cookies.
 func (h *AuthHandler) Register(c *gin.Context) {
 	var req registerRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		httpx.Fail(c, http.StatusBadRequest, 40000, err.Error())
 		return
 	}
-	u, accessToken, refreshToken, err := h.svc.Register(c.Request.Context(), req.Email, req.Password, req.DisplayName)
+	u, accessToken, refreshToken, err := h.svc.Register(
+		c.Request.Context(), req.Email, req.Password, req.DisplayName)
 	if err != nil {
 		middleware.WriteError(c, err)
 		return
 	}
-	httpx.OK(c, authResponse{User: u, AccessToken: accessToken, RefreshToken: refreshToken, TokenType: "Bearer"})
+	csrfToken := middleware.GenerateCSRFToken()
+	middleware.SetAuthCookies(c.Writer, accessToken, refreshToken, csrfToken)
+	httpx.OK(c, authResponse{User: u})
 }
 
 // Login handles POST /auth/login.
+// Sets sent_access, sent_refresh (httpOnly), and sent_csrf (readable) cookies.
 func (h *AuthHandler) Login(c *gin.Context) {
 	var req loginRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		httpx.Fail(c, http.StatusBadRequest, 40000, err.Error())
 		return
 	}
-	u, accessToken, refreshToken, err := h.svc.Login(c.Request.Context(), req.Email, req.Password)
+	u, accessToken, refreshToken, err := h.svc.Login(
+		c.Request.Context(), req.Email, req.Password)
 	if err != nil {
 		middleware.WriteError(c, err)
 		return
 	}
-	httpx.OK(c, authResponse{User: u, AccessToken: accessToken, RefreshToken: refreshToken, TokenType: "Bearer"})
+	csrfToken := middleware.GenerateCSRFToken()
+	middleware.SetAuthCookies(c.Writer, accessToken, refreshToken, csrfToken)
+	httpx.OK(c, authResponse{User: u})
 }
 
-// Me handles GET /auth/me. Caller is expected to be authenticated; the
-// middleware has already injected user_id into the gin context. We re-resolve
-// the row so a deleted/disabled account can't keep a stale token alive.
-//
-// If user_id is missing or not a string, fail loud with 500 — this means a
-// route-grouping mistake (e.g. registering Me on the unprotected engine
-// instead of inside the protected group). Silently coercing to "" would
-// surface as a confusing 404 via FindByID("", ...).
+// Me handles GET /auth/me.
 func (h *AuthHandler) Me(c *gin.Context) {
 	userID := c.GetString("user_id")
 	if userID == "" {
@@ -105,28 +105,27 @@ func (h *AuthHandler) Me(c *gin.Context) {
 	httpx.OK(c, gin.H{"user": u})
 }
 
-// refreshRequest is the JSON body for POST /auth/refresh.
-type refreshRequest struct {
-	RefreshToken string `json:"refresh_token" binding:"required"`
-}
-
-// Refresh handles POST /auth/refresh. Accepts a refresh token, returns a new
-// access_token + refresh_token pair. This endpoint is public (no auth required).
+// Refresh handles POST /auth/refresh. Reads the refresh token from the
+// sent_refresh cookie (ADR-0008) instead of a JSON body.
 func (h *AuthHandler) Refresh(c *gin.Context) {
-	var req refreshRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		httpx.Fail(c, http.StatusBadRequest, 40000, err.Error())
+	refreshToken, err := c.Cookie("sent_refresh")
+	if err != nil || refreshToken == "" {
+		httpx.Fail(c, http.StatusUnauthorized, 40100, "missing refresh cookie")
 		return
 	}
-	u, accessToken, refreshToken, err := h.svc.Refresh(c.Request.Context(), req.RefreshToken)
-	if err != nil {
-		middleware.WriteError(c, err)
+	u, accessToken, newRefreshToken, svcErr := h.svc.Refresh(
+		c.Request.Context(), refreshToken)
+	if svcErr != nil {
+		middleware.WriteError(c, svcErr)
 		return
 	}
-	httpx.OK(c, authResponse{User: u, AccessToken: accessToken, RefreshToken: refreshToken, TokenType: "Bearer"})
+	csrfToken := middleware.GenerateCSRFToken()
+	middleware.SetAuthCookies(c.Writer, accessToken, newRefreshToken, csrfToken)
+	httpx.OK(c, authResponse{User: u})
 }
 
-// Logout handles POST /auth/logout. Revoked refresh tokens are no longer usable.
+// Logout handles POST /auth/logout. Revokes all refresh tokens for the user
+// and clears all auth cookies.
 func (h *AuthHandler) Logout(c *gin.Context) {
 	userID := c.GetString("user_id")
 	if userID == "" {
@@ -138,5 +137,6 @@ func (h *AuthHandler) Logout(c *gin.Context) {
 		middleware.WriteError(c, err)
 		return
 	}
+	middleware.ClearAuthCookies(c.Writer)
 	httpx.OK(c, nil)
 }
