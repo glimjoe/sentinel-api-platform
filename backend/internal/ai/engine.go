@@ -3,6 +3,7 @@ package ai
 import (
 	"context"
 	"fmt"
+	"log"
 	"math"
 
 	"github.com/glimjoe/sentinel-api-platform/internal/model"
@@ -11,9 +12,9 @@ import (
 
 // Engine orchestrates AI operations: provider + cache + guard.
 type Engine struct {
-	provider Provider
-	cache    *Cache
-	guard    *Guard
+	provider    Provider
+	cache       *Cache
+	guard       *Guard
 	MaxTokens   int
 	Temperature float64
 }
@@ -29,23 +30,25 @@ func NewEngine(provider Provider, cache *Cache, guard *Guard, maxTokens int, tem
 	}
 }
 
-// call runs the full pipeline: guard → cache → provider → cache → record.
+// call runs the full pipeline: cache → guard → provider → cache → record.
 func (e *Engine) call(ctx context.Context, function string, systemPrompt string, messages []Message) (*ProviderResponse, error) {
-	if err := e.guard.Allow(ctx); err != nil {
-		return nil, err
-	}
-
 	req := &ProviderRequest{
 		SystemPrompt: systemPrompt,
 		Messages:     messages,
 		MaxTokens:    e.MaxTokens,
 		Temperature:  e.Temperature,
+		Function:     function,
 	}
 
+	// Cache check first — no cost, avoids unnecessary DB queries.
 	if e.cache != nil {
 		if resp, ok := e.cache.Get(ctx, req); ok {
 			return resp, nil
 		}
+	}
+
+	if err := e.guard.Allow(ctx); err != nil {
+		return nil, err
 	}
 
 	resp, err := e.provider.Complete(ctx, req)
@@ -58,24 +61,26 @@ func (e *Engine) call(ctx context.Context, function string, systemPrompt string,
 	}
 
 	cost := estimateCost(resp.Model, resp.InputTokens, resp.OutputTokens)
-	_ = e.guard.Record(ctx, &model.AiUsage{
+	if err := e.guard.Record(ctx, &model.AiUsage{
 		ID:               id.New(),
 		Model:            resp.Model,
 		Function:         function,
 		PromptTokens:     resp.InputTokens,
 		CompletionTokens: resp.OutputTokens,
 		CostUSD:          cost,
-	})
+	}); err != nil {
+		log.Printf("ai: guard.Record: %v", err)
+	}
 
 	return resp, nil
 }
 
 var modelPricing = map[string]struct{ input, output float64 }{
-	"mock":                {0, 0},
-	"claude-sonnet-4-6":   {3.0 / 1_000_000, 15.0 / 1_000_000},
-	"claude-opus-4-8":     {15.0 / 1_000_000, 75.0 / 1_000_000},
-	"gpt-4o":              {2.5 / 1_000_000, 10.0 / 1_000_000},
-	"gpt-4o-mini":         {0.15 / 1_000_000, 0.60 / 1_000_000},
+	"mock":              {0, 0},
+	"claude-sonnet-4-6": {3.0 / 1_000_000, 15.0 / 1_000_000},
+	"claude-opus-4-8":   {15.0 / 1_000_000, 75.0 / 1_000_000},
+	"gpt-4o":            {2.5 / 1_000_000, 10.0 / 1_000_000},
+	"gpt-4o-mini":       {0.15 / 1_000_000, 0.60 / 1_000_000},
 }
 
 func estimateCost(modelStr string, inTokens, outTokens int) float64 {

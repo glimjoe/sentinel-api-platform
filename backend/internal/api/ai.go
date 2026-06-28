@@ -77,5 +77,5 @@ func (h *AIHandler) Prioritize(c *gin.Context) {
 }
 
 func (h *AIHandler) Budget(c *gin.Context) {
-	httpx.OK(c, h.svc.Budget())
+	httpx.OK(c, h.svc.Budget(c.Request.Context()))
 }

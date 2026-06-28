@@ -10,7 +10,9 @@ export function generateCases(pid: string, apiId?: string): Promise<CompleteResp
 }
 
 export function prioritizeCases(pid: string, caseIds?: string[]): Promise<{ priorities: PriorityItem[] }> {
-  return api.post<any, { priorities: PriorityItem[] }>(`/projects/${pid}/ai/prioritize`, { case_ids: caseIds || undefined })
+  return api.post<any, { priorities: PriorityItem[] }>(`/projects/${pid}/ai/prioritize`, {
+    case_ids: caseIds || undefined,
+  })
 }
 
 export function getBudget(): Promise<BudgetInfo> {

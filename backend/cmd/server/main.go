@@ -242,18 +242,20 @@ func run() error {
 	aiCache := ai.NewCache(rdb, time.Duration(cfg.AI.CacheTTLSeconds)*time.Second)
 	aiGuard := ai.NewGuard(aiRepo, cfg.AI.DailyLimitUSD, cfg.AI.MonthlyLimitUSD)
 	aiEngine := ai.NewEngine(aiProvider, aiCache, aiGuard, cfg.AI.MaxTokens, 0.3)
-	aiSvc := service.NewAIService(projectSvc, ai.NewAttributor(aiEngine), ai.NewCompleter(aiEngine), ai.NewPrioritizer(aiEngine), apiRepo, testCaseRepo)
+	aiSvc := service.NewAIService(projectSvc, ai.NewAttributor(aiEngine), ai.NewCompleter(aiEngine), ai.NewPrioritizer(aiEngine), apiRepo, testCaseRepo, aiGuard)
 	aiH := api.NewAIHandler(aiSvc)
 
-	protected.POST("/projects/:pid/ai/attribution", middleware.RequireProjectRole(projectSvc,
-		model.ProjectRoleAdmin, model.ProjectRoleEngineer),
-		aiH.Attribute)
-	protected.POST("/projects/:pid/ai/complete", middleware.RequireProjectRole(projectSvc,
-		model.ProjectRoleAdmin, model.ProjectRoleEngineer),
-		aiH.Complete)
-	protected.POST("/projects/:pid/ai/prioritize", middleware.RequireProjectRole(projectSvc,
-		model.ProjectRoleAdmin, model.ProjectRoleEngineer),
-		aiH.Prioritize)
+	if cfg.AI.Enabled {
+		protected.POST("/projects/:pid/ai/attribution", middleware.RequireProjectRole(projectSvc,
+			model.ProjectRoleAdmin, model.ProjectRoleEngineer),
+			aiH.Attribute)
+		protected.POST("/projects/:pid/ai/complete", middleware.RequireProjectRole(projectSvc,
+			model.ProjectRoleAdmin, model.ProjectRoleEngineer),
+			aiH.Complete)
+		protected.POST("/projects/:pid/ai/prioritize", middleware.RequireProjectRole(projectSvc,
+			model.ProjectRoleAdmin, model.ProjectRoleEngineer),
+			aiH.Prioritize)
+	}
 	protected.GET("/ai/budget", aiH.Budget)
 
 	// Mock engine wiring (Phase 2 M1). The public /mock/:projectSlug/*path

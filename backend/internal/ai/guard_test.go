@@ -32,8 +32,8 @@ func TestGuard_Allow_DailyExceeded(t *testing.T) {
 
 func TestGuard_Allow_MonthlyExceeded(t *testing.T) {
 	g := &Guard{store: &fakeUsageStore{daily: 0.1, monthly: 30.0}, dailyLimit: 1.0, monthlyLimit: 20.0}
-	if err := g.Allow(context.Background()); err == nil {
-		t.Error("expected monthly limit exceeded error")
+	if err := g.Allow(context.Background()); err != ErrMonthlyBudgetExceeded {
+		t.Errorf("expected ErrMonthlyBudgetExceeded, got %v", err)
 	}
 }
 

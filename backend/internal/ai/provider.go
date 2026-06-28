@@ -8,8 +8,9 @@ import (
 
 // Sentinel errors for AI operations.
 var (
-	ErrAIDisabled          = errors.New("ai: AI is disabled")
-	ErrDailyBudgetExceeded = errors.New("ai: daily budget exceeded")
+	ErrAIDisabled            = errors.New("ai: AI is disabled")
+	ErrDailyBudgetExceeded   = errors.New("ai: daily budget exceeded")
+	ErrMonthlyBudgetExceeded = errors.New("ai: monthly budget exceeded")
 )
 
 // Provider abstracts an LLM backend (mock, anthropic, openai, noop).
@@ -24,6 +25,7 @@ type ProviderRequest struct {
 	Messages     []Message
 	MaxTokens    int
 	Temperature  float64
+	Function     string // "attribution", "completion", "prioritization"
 }
 
 // Message represents a chat message.

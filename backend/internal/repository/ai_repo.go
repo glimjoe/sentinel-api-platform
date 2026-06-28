@@ -22,7 +22,7 @@ func NewAiRepo(db *gorm.DB) *AiRepo { return &AiRepo{db: db} }
 // RecordUsage inserts an AI usage entry.
 func (r *AiRepo) RecordUsage(ctx context.Context, m *model.AiUsage) error {
 	m.ID = id.New()
-	m.CreatedAt = time.Now()
+	m.CreatedAt = time.Now().UTC()
 	if err := r.db.WithContext(ctx).Create(m).Error; err != nil {
 		return fmt.Errorf("record ai usage: %w", err)
 	}

@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -49,5 +50,7 @@ func hashPrompt(req *ProviderRequest) string {
 		h.Write([]byte(m.Role))
 		h.Write([]byte(m.Content))
 	}
+	// Include parameter variations in the cache key.
+	h.Write([]byte(fmt.Sprintf("|mt=%d|t=%.2f", req.MaxTokens, req.Temperature)))
 	return hex.EncodeToString(h.Sum(nil))
 }

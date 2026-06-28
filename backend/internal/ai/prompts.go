@@ -1,23 +1,31 @@
 package ai
 
-const promptAttribution = `You are a failure attribution engine for an API testing platform. Analyze the test result below and determine the root cause.
+import (
+	"embed"
+	"strings"
+)
 
-Output valid JSON:
-{
-  "analysis": "<one-paragraph analysis>",
-  "root_cause": "<concise root cause>",
-  "confidence": <0.0-1.0>,
-  "suggested_fix": "<optional fix suggestion>"
-}`
+//go:embed prompts/*.md
+var promptFS embed.FS
 
-const promptCompletion = `You are a test case generation engine for an API testing platform. Given API specifications and existing test cases, generate new test cases to improve coverage.
+// Prompt templates are loaded from docs/ai-workflow/prompts/ at init time.
+// This keeps prompt versions independent of Go source versions (per ADR-0005).
+var (
+	promptAttribution   string
+	promptCompletion    string
+	promptPrioritization string
+)
 
-Output valid JSON with a "test_cases" array. Each case must have:
-- name, method (GET/POST/PUT/PATCH/DELETE), path, expected_status
-- expected_body_match: one of "exact","contains","jsonpath","schema","regex","none"
-- expected_body_pattern: (optional)`
-
-const promptPrioritization = `You are a priority suggestion engine for an API testing platform. Given a list of test cases, suggest priority levels.
-
-Output valid JSON with a "priorities" array. Each item:
-- case_id, priority: "p0"/"p1"/"p2"/"p3", reasoning`
+func init() {
+	load := func(name string) string {
+		data, err := promptFS.ReadFile("prompts/" + name)
+		if err != nil {
+			// Fall back to minimal prompt — the real ones live in docs/.
+			return "You are an AI assistant. Respond with valid JSON."
+		}
+		return strings.TrimSpace(string(data))
+	}
+	promptAttribution = load("attribution.md")
+	promptCompletion = load("completion.md")
+	promptPrioritization = load("priority.md")
+}

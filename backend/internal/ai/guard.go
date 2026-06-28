@@ -40,7 +40,7 @@ func (g *Guard) Allow(ctx context.Context) error {
 		return fmt.Errorf("guard: check monthly usage: %w", err)
 	}
 	if monthly >= g.monthlyLimit {
-		return ErrDailyBudgetExceeded
+		return ErrMonthlyBudgetExceeded
 	}
 	return nil
 }
@@ -49,3 +49,19 @@ func (g *Guard) Allow(ctx context.Context) error {
 func (g *Guard) Record(ctx context.Context, m *model.AiUsage) error {
 	return g.store.RecordUsage(ctx, m)
 }
+
+// DailyUsage returns the total USD cost for today.
+func (g *Guard) DailyUsage(ctx context.Context) (float64, error) {
+	return g.store.GetDailyUsage(ctx)
+}
+
+// MonthlyUsage returns the total USD cost for the current month.
+func (g *Guard) MonthlyUsage(ctx context.Context) (float64, error) {
+	return g.store.GetMonthlyUsage(ctx)
+}
+
+// DailyLimit returns the configured daily USD limit.
+func (g *Guard) DailyLimit() float64 { return g.dailyLimit }
+
+// MonthlyLimit returns the configured monthly USD limit.
+func (g *Guard) MonthlyLimit() float64 { return g.monthlyLimit }
