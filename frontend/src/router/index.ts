@@ -16,10 +16,18 @@ const router = createRouter({
   routes,
 })
 
-router.beforeEach((to) => {
+// ADR-0008: Cookie-based auth. On first visit, try /auth/me to restore
+// the session from httpOnly cookies. If that fails, redirect to login.
+router.beforeEach(async (to) => {
   const auth = useAuthStore()
   if (to.meta.public) return true
-  if (!auth.isAuthenticated) return { name: 'login', query: { redirect: to.fullPath } }
+
+  // Lazy-fetch user on first protected navigation.
+  if (!auth.user) {
+    const ok = await auth.fetchUser()
+    if (!ok) return { name: 'login', query: { redirect: to.fullPath } }
+  }
+
   return true
 })
 

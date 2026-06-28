@@ -60,6 +60,8 @@ backend/storage/
 backend/data/
 
 # --- Sentinel runtime artifacts ---
+.pids/
+sentinel_*.sql.gz
 backend/storage/mysql/
 backend/storage/redis/
 backend/storage/uploads/

@@ -1,0 +1,152 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  # ── Job 1: Go unit + integration tests ──────────────────────────────
+  go-tests:
+    runs-on: ubuntu-latest
+    services:
+      mysql:
+        image: mysql:8
+        env:
+          MYSQL_ROOT_PASSWORD: sentinel-dev
+          MYSQL_DATABASE: sentinel_test
+        ports:
+          - 3307:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h localhost"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=5
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6380:6379
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+      - name: Run Go tests
+        working-directory: backend
+        env:
+          APP_ENV: development
+          APP_PORT: '8081'
+          APP_HOST: 0.0.0.0
+          APP_BASE_URL: http://localhost:8081
+          FRONTEND_ORIGIN: http://localhost:5180
+          MYSQL_HOST: 127.0.0.1
+          MYSQL_PORT: '3307'
+          MYSQL_USER: root
+          MYSQL_PASSWORD: sentinel-dev
+          MYSQL_DATABASE: sentinel_test
+          MYSQL_TEST_DATABASE: sentinel_test
+          REDIS_HOST: 127.0.0.1
+          REDIS_PORT: '6380'
+          REDIS_DB: '0'
+          REDIS_TEST_DB: '15'
+          JWT_ACCESS_SECRET: ci-test-access-secret-min-32-chars!!
+          JWT_REFRESH_SECRET: ci-test-refresh-secret-min-32-chars!!
+          JWT_ACCESS_TTL: 15m
+          JWT_REFRESH_TTL: 168h
+          BCRYPT_COST: '4'
+          AI_ENABLED: 'true'
+          AI_PROVIDER: mock
+          MOCK_RECORD_HITS: 'false'
+          RUNNER_DEFAULT_TIMEOUT_SECONDS: '30'
+          RUNNER_DEFAULT_MODE: sequential
+          RUNNER_DEFAULT_CONCURRENCY: '1'
+          RUNNER_MAX_CONCURRENCY: '16'
+          LOG_LEVEL: info
+          LOG_FORMAT: json
+        run: |
+          go run ./cmd/migrate up
+          go test -short -race -count=1 ./internal/...
+
+  # ── Job 2: Vue / Vitest unit tests ──────────────────────────────────
+  frontend-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+      - name: Install & test
+        working-directory: frontend
+        run: |
+          npm ci
+          npm run test:unit
+
+  # ── Job 3: Playwright E2E tests ─────────────────────────────────────
+  e2e-tests:
+    runs-on: ubuntu-latest
+    services:
+      mysql:
+        image: mysql:8
+        env:
+          MYSQL_ROOT_PASSWORD: sentinel-dev
+          MYSQL_DATABASE: sentinel_test
+        ports:
+          - 3307:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h localhost"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=5
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6380:6379
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+      - name: Install frontend deps
+        working-directory: frontend
+        run: npm ci
+      - name: Install Playwright browsers
+        working-directory: frontend
+        run: npx playwright install chromium --with-deps
+      - name: Run migrations
+        working-directory: backend
+        env:
+          MYSQL_HOST: 127.0.0.1
+          MYSQL_PORT: '3307'
+          MYSQL_USER: root
+          MYSQL_PASSWORD: sentinel-dev
+          MYSQL_DATABASE: sentinel_test
+        run: go run ./cmd/migrate up
+      - name: Run E2E tests
+        working-directory: frontend
+        env:
+          APP_ENV: development
+          APP_PORT: '8081'
+          APP_HOST: 0.0.0.0
+          MYSQL_HOST: 127.0.0.1
+          MYSQL_PORT: '3307'
+          MYSQL_USER: root
+          MYSQL_PASSWORD: sentinel-dev
+          MYSQL_DATABASE: sentinel_test
+          MYSQL_TEST_DATABASE: sentinel_test
+          REDIS_HOST: 127.0.0.1
+          REDIS_PORT: '6380'
+          JWT_ACCESS_SECRET: ci-e2e-access-secret-min-32-chars!!!
+          JWT_REFRESH_SECRET: ci-e2e-refresh-secret-min-32-chars!!!
+          JWT_ACCESS_TTL: 15m
+          JWT_REFRESH_TTL: 168h
+          BCRYPT_COST: '4'
+          AI_ENABLED: 'true'
+          AI_PROVIDER: mock
+          MOCK_RECORD_HITS: 'false'
+          RUNNER_DEFAULT_TIMEOUT_SECONDS: '30'
+          LOG_LEVEL: info
+        run: npx playwright test

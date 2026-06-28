@@ -122,9 +122,27 @@ func TestAuthHandler_Register_HappyPath(t *testing.T) {
 		t.Errorf("app code = %d, want 0 (OK)", env.Code)
 	}
 	raw, _ := json.Marshal(env.Data)
-	for _, key := range []string{`"user"`, `"access_token"`, `"token_type":"Bearer"`} {
-		if !strings.Contains(string(raw), key) {
-			t.Errorf("data missing %s: %s", key, raw)
+
+	// ADR-0008: tokens are httpOnly cookies, not JSON body fields.
+	if !strings.Contains(string(raw), `"user"`) {
+		t.Errorf("data missing user key: %s", raw)
+	}
+
+	// Verify Set-Cookie headers.
+	cookies := w.Result().Cookies()
+	found := map[string]bool{}
+	for _, ck := range cookies {
+		found[ck.Name] = true
+	}
+	for _, name := range []string{"sent_access", "sent_refresh", "sent_csrf"} {
+		if !found[name] {
+			t.Errorf("missing Set-Cookie: %s", name)
+		}
+	}
+	// sent_access must be HttpOnly.
+	for _, ck := range cookies {
+		if ck.Name == "sent_access" && !ck.HttpOnly {
+			t.Error("sent_access cookie must be HttpOnly")
 		}
 	}
 }

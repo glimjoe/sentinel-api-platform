@@ -9,66 +9,53 @@ export interface User {
   role: 'admin' | 'engineer' | 'viewer'
 }
 
-export interface AuthResponse {
-  access_token: string
-  refresh_token: string
-  user: User
-}
-
+// ADR-0008: Tokens are httpOnly cookies. The store no longer reads/writes
+// localStorage. Auth state is determined by calling /auth/me.
 export const useAuthStore = defineStore('auth', () => {
-  const accessToken = ref<string | null>(localStorage.getItem('access_token'))
-  const refreshToken = ref<string | null>(localStorage.getItem('refresh_token'))
   const user = ref<User | null>(null)
+  const loading = ref(false)
 
-  const isAuthenticated = computed(() => !!accessToken.value)
+  const isAuthenticated = computed(() => !!user.value)
 
-  function setTokens(at: string, rt: string) {
-    accessToken.value = at
-    refreshToken.value = rt
-    localStorage.setItem('access_token', at)
-    localStorage.setItem('refresh_token', rt)
-  }
-
-  function clear() {
-    accessToken.value = null
-    refreshToken.value = null
-    user.value = null
-    localStorage.removeItem('access_token')
-    localStorage.removeItem('refresh_token')
+  // fetchUser is called by the router guard on page load to check
+  // whether the user has valid httpOnly cookies.
+  async function fetchUser(): Promise<boolean> {
+    loading.value = true
+    try {
+      const resp: any = await api.get('/auth/me')
+      user.value = resp.user ?? resp.data?.user ?? null
+      return !!user.value
+    } catch {
+      user.value = null
+      return false
+    } finally {
+      loading.value = false
+    }
   }
 
   async function login(email: string, password: string): Promise<void> {
-    const resp = await api.post<AuthResponse, AuthResponse>('/auth/login', { email, password })
-    setTokens(resp.access_token, resp.refresh_token)
-    user.value = resp.user
+    const resp: any = await api.post('/auth/login', { email, password })
+    // Cookies (sent_access, sent_refresh, sent_csrf) are set by the server.
+    user.value = resp.user ?? resp.data?.user ?? null
   }
 
   async function register(email: string, password: string, displayName?: string): Promise<void> {
-    const resp = await api.post<AuthResponse, AuthResponse>('/auth/register', {
+    const resp: any = await api.post('/auth/register', {
       email,
       password,
       displayName,
     })
-    setTokens(resp.access_token, resp.refresh_token)
-    user.value = resp.user
+    user.value = resp.user ?? resp.data?.user ?? null
   }
 
-  function logout() {
-    clear()
-  }
-
-  async function refresh(): Promise<boolean> {
-    if (!refreshToken.value) return false
+  async function logout(): Promise<void> {
     try {
-      const resp = await api.post<AuthResponse, AuthResponse>('/auth/refresh', { refresh_token: refreshToken.value })
-      setTokens(resp.access_token, resp.refresh_token)
-      user.value = resp.user
-      return true
+      await api.post('/auth/logout')
     } catch {
-      clear()
-      return false
+      // Even if the server call fails, clear local state.
     }
+    user.value = null
   }
 
-  return { accessToken, refreshToken, user, isAuthenticated, login, register, logout, refresh }
+  return { user, loading, isAuthenticated, fetchUser, login, register, logout }
 })
