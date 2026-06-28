@@ -180,6 +180,43 @@ func run() error {
 	protected.POST("/rules/:rid/hits", mockRuleH.RecordHit)
 	protected.GET("/rules/:rid/hits", mockRuleH.ListHits)
 
+	// TestCase + TestRun wiring (Phase 3).
+	testCaseRepo := repository.NewTestCaseRepo(db)
+	testResultRepo := repository.NewTestResultRepo(db)
+	testRunRepo := repository.NewTestRunRepo(db)
+	testCaseSvc := service.NewTestCaseService(testCaseRepo, projectSvc)
+	testRunSvc := service.NewTestRunService(testRunRepo, testCaseRepo, testResultRepo, projectSvc)
+	testCaseH := api.NewTestCaseHandler(testCaseSvc)
+	testRunH := api.NewTestRunHandler(testRunSvc)
+
+	protected.POST("/projects/:pid/cases", middleware.RequireProjectRole(projectSvc,
+		model.ProjectRoleAdmin, model.ProjectRoleEngineer),
+		testCaseH.Create)
+	protected.GET("/projects/:pid/cases", middleware.RequireProjectRole(projectSvc,
+		model.ProjectRoleAdmin, model.ProjectRoleEngineer, model.ProjectRoleViewer),
+		testCaseH.List)
+	protected.GET("/projects/:pid/cases/:caseId", middleware.RequireProjectRole(projectSvc,
+		model.ProjectRoleAdmin, model.ProjectRoleEngineer, model.ProjectRoleViewer),
+		testCaseH.Get)
+	protected.PATCH("/projects/:pid/cases/:caseId", middleware.RequireProjectRole(projectSvc,
+		model.ProjectRoleAdmin, model.ProjectRoleEngineer),
+		testCaseH.Update)
+	protected.DELETE("/projects/:pid/cases/:caseId", middleware.RequireProjectRole(projectSvc,
+		model.ProjectRoleAdmin, model.ProjectRoleEngineer),
+		testCaseH.Delete)
+	protected.POST("/projects/:pid/runs", middleware.RequireProjectRole(projectSvc,
+		model.ProjectRoleAdmin, model.ProjectRoleEngineer),
+		testRunH.Create)
+	protected.POST("/projects/:pid/runs/:runId/start", middleware.RequireProjectRole(projectSvc,
+		model.ProjectRoleAdmin, model.ProjectRoleEngineer),
+		testRunH.Start)
+	protected.GET("/projects/:pid/runs", middleware.RequireProjectRole(projectSvc,
+		model.ProjectRoleAdmin, model.ProjectRoleEngineer, model.ProjectRoleViewer),
+		testRunH.List)
+	protected.GET("/projects/:pid/runs/:runId", middleware.RequireProjectRole(projectSvc,
+		model.ProjectRoleAdmin, model.ProjectRoleEngineer, model.ProjectRoleViewer),
+		testRunH.Get)
+
 	// Mock engine wiring (Phase 2 M1). The public /mock/:projectSlug/*path
 	// route is registered OUTSIDE the protected group — anyone with the
 	// project slug can hit it (this is the whole point of a mock server).
