@@ -27,36 +27,46 @@ type userStore interface {
 	FindByID(ctx context.Context, id string) (*model.User, error)
 }
 
+// refreshTokenStore is the persistence contract for refresh tokens.
+type refreshTokenStore interface {
+	GenerateToken(ctx context.Context, userID, ip, userAgent string) (string, error)
+	Consume(ctx context.Context, rawToken string) (string, error)
+	RevokeAllForUser(ctx context.Context, userID string) error
+	LookupUserID(ctx context.Context, rawToken string) (string, error)
+}
+
 // AuthService is the entry point for authentication business logic.
 type AuthService struct {
 	users        userStore
+	refreshTokens refreshTokenStore
 	accessSecret string
 	accessTTL    time.Duration
 	bcryptCost   int
 }
 
 // NewAuthService wires an AuthService. Caller owns the lifetime.
-func NewAuthService(users userStore, accessSecret string, accessTTL time.Duration, bcryptCost int) *AuthService {
+func NewAuthService(users userStore, refreshTokens refreshTokenStore, accessSecret string, accessTTL time.Duration, bcryptCost int) *AuthService {
 	return &AuthService{
-		users:        users,
-		accessSecret: accessSecret,
-		accessTTL:    accessTTL,
-		bcryptCost:   bcryptCost,
+		users:         users,
+		refreshTokens: refreshTokens,
+		accessSecret:  accessSecret,
+		accessTTL:     accessTTL,
+		bcryptCost:    bcryptCost,
 	}
 }
 
 // Register creates a new user, hashes the password, persists the row, and
-// returns a freshly minted access token. Returns errs.ErrEmailTaken if the
-// email is already registered.
-func (s *AuthService) Register(ctx context.Context, email, plain, displayName string) (*model.User, string, error) {
+// returns a freshly minted access token and refresh token.
+// Returns errs.ErrEmailTaken if the email is already registered.
+func (s *AuthService) Register(ctx context.Context, email, plain, displayName string) (*model.User, string, string, error) {
 	email = strings.ToLower(strings.TrimSpace(email))
 	if err := validateRegisterInput(email, plain); err != nil {
-		return nil, "", err
+		return nil, "", "", err
 	}
 
 	hash, err := password.Hash(plain, s.bcryptCost)
 	if err != nil {
-		return nil, "", fmt.Errorf("hash password: %w", err)
+		return nil, "", "", fmt.Errorf("hash password: %w", err)
 	}
 
 	u := &model.User{
@@ -69,49 +79,54 @@ func (s *AuthService) Register(ctx context.Context, email, plain, displayName st
 	}
 	if err := s.users.Create(ctx, u); err != nil {
 		if isDuplicateEmail(err) {
-			return nil, "", errs.ErrEmailTaken
+			return nil, "", "", errs.ErrEmailTaken
 		}
-		return nil, "", fmt.Errorf("create user: %w", err)
+		return nil, "", "", fmt.Errorf("create user: %w", err)
 	}
 
-	token, err := jwt.Mint(s.accessSecret, u.ID, u.Email, u.Role, s.accessTTL)
+	accessToken, err := jwt.Mint(s.accessSecret, u.ID, u.Email, u.Role, s.accessTTL)
 	if err != nil {
-		return nil, "", fmt.Errorf("mint access token: %w", err)
+		return nil, "", "", fmt.Errorf("mint access token: %w", err)
 	}
-	return u, token, nil
+	refreshToken, err := s.refreshTokens.GenerateToken(ctx, u.ID, "", "")
+	if err != nil {
+		return nil, "", "", fmt.Errorf("generate refresh token: %w", err)
+	}
+	return u, accessToken, refreshToken, nil
 }
 
-// Login verifies email + password and returns (user, access_token).
+// Login verifies email + password and returns (user, access_token, refresh_token, err).
 // Returns errs.ErrInvalidCredentials for: missing user, disabled user, OR wrong
-// password. Collapsing all three prevents account enumeration — a distinct
-// 403 for "user exists but is disabled" would let an attacker probe valid emails.
-// ErrUserInactive is reserved for already-authenticated paths (Me) where the
-// caller is the legitimate owner being told their account is locked.
-func (s *AuthService) Login(ctx context.Context, email, plain string) (*model.User, string, error) {
+// password. Collapsing all three prevents account enumeration.
+func (s *AuthService) Login(ctx context.Context, email, plain string) (*model.User, string, string, error) {
 	email = strings.ToLower(strings.TrimSpace(email))
 	if email == "" || plain == "" {
-		return nil, "", errs.ErrInvalidCredentials
+		return nil, "", "", errs.ErrInvalidCredentials
 	}
 
 	u, err := s.users.FindByEmail(ctx, email)
 	if err != nil {
 		if errors.Is(err, errs.ErrNotFound) {
-			return nil, "", errs.ErrInvalidCredentials
+			return nil, "", "", errs.ErrInvalidCredentials
 		}
-		return nil, "", fmt.Errorf("lookup user: %w", err)
+		return nil, "", "", fmt.Errorf("lookup user: %w", err)
 	}
 	if !u.IsActive {
-		return nil, "", errs.ErrInvalidCredentials
+		return nil, "", "", errs.ErrInvalidCredentials
 	}
 	if !password.Verify(u.PasswordHash, plain) {
-		return nil, "", errs.ErrInvalidCredentials
+		return nil, "", "", errs.ErrInvalidCredentials
 	}
 
-	token, err := jwt.Mint(s.accessSecret, u.ID, u.Email, u.Role, s.accessTTL)
+	accessToken, err := jwt.Mint(s.accessSecret, u.ID, u.Email, u.Role, s.accessTTL)
 	if err != nil {
-		return nil, "", fmt.Errorf("mint access token: %w", err)
+		return nil, "", "", fmt.Errorf("mint access token: %w", err)
 	}
-	return u, token, nil
+	refreshToken, err := s.refreshTokens.GenerateToken(ctx, u.ID, "", "")
+	if err != nil {
+		return nil, "", "", fmt.Errorf("generate refresh token: %w", err)
+	}
+	return u, accessToken, refreshToken, nil
 }
 
 // Me returns the user identified by id (claims.UserID from middleware).
@@ -130,6 +145,39 @@ func (s *AuthService) Me(ctx context.Context, userID string) (*model.User, error
 		return nil, errs.ErrUserInactive
 	}
 	return u, nil
+}
+
+// Refresh validates a refresh token, creates new tokens, then revokes the
+// old token. Creating first avoids permanent session loss if the DB is
+// temporarily unavailable after revocation.
+func (s *AuthService) Refresh(ctx context.Context, rawToken string) (*model.User, string, string, error) {
+	userID, err := s.refreshTokens.LookupUserID(ctx, rawToken)
+	if err != nil {
+		return nil, "", "", fmt.Errorf("%w: %v", errs.ErrInvalidCredentials, err)
+	}
+	u, err := s.users.FindByID(ctx, userID)
+	if err != nil {
+		return nil, "", "", fmt.Errorf("lookup user for refresh: %w", err)
+	}
+	if !u.IsActive {
+		return nil, "", "", errs.ErrInvalidCredentials
+	}
+	accessToken, err := jwt.Mint(s.accessSecret, u.ID, u.Email, u.Role, s.accessTTL)
+	if err != nil {
+		return nil, "", "", fmt.Errorf("mint access token: %w", err)
+	}
+	refreshToken, err := s.refreshTokens.GenerateToken(ctx, u.ID, "", "")
+	if err != nil {
+		return nil, "", "", fmt.Errorf("generate refresh token: %w", err)
+	}
+	// Revoke the old token only after the new pair is successfully created.
+	s.refreshTokens.Consume(ctx, rawToken)
+	return u, accessToken, refreshToken, nil
+}
+
+// Logout revokes all refresh tokens belonging to userID.
+func (s *AuthService) Logout(ctx context.Context, userID string) error {
+	return s.refreshTokens.RevokeAllForUser(ctx, userID)
 }
 
 // validateRegisterInput enforces a minimum bar on email + password length

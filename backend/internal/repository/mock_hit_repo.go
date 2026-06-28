@@ -34,3 +34,8 @@ func (r *MockHitRepo) Create(ctx context.Context, hit *model.MockHit) error {
 	}
 	return nil
 }
+
+// Record satisfies the engine.HitRecorder interface by delegating to Create.
+func (r *MockHitRepo) Record(ctx context.Context, hit *model.MockHit) error {
+	return r.Create(ctx, hit)
+}

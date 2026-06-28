@@ -52,13 +52,31 @@ func (f *fakeUserStore) FindByID(_ context.Context, id string) (*model.User, err
 	return nil, errs.ErrNotFound
 }
 
+// fakeRefreshTokenStore satisfies service.refreshTokenStore for handler tests.
+type fakeRefreshTokenStore struct{ next string }
+
+func (f *fakeRefreshTokenStore) GenerateToken(_ context.Context, userID, _, _ string) (string, error) {
+	f.next = "rt-" + userID
+	return f.next, nil
+}
+func (f *fakeRefreshTokenStore) Consume(_ context.Context, rawToken string) (string, error) {
+	return "", nil
+}
+func (f *fakeRefreshTokenStore) RevokeAllForUser(_ context.Context, userID string) error {
+	return nil
+}
+
+func (f *fakeRefreshTokenStore) LookupUserID(_ context.Context, rawToken string) (string, error) {
+	return "", nil
+}
+
 // newAuthTestEnv wires an AuthHandler behind a gin engine with a helper
 // to inject user_id via a request header (the real auth middleware
 // injects from a JWT, but for unit tests a header is enough).
 func newAuthTestEnv(t *testing.T) (*gin.Engine, *service.AuthService) {
 	t.Helper()
 	repo := newFakeUserStore()
-	svc := service.NewAuthService(repo, "test-secret", time.Minute, bcrypt.MinCost)
+	svc := service.NewAuthService(repo, &fakeRefreshTokenStore{}, "test-secret", time.Minute, bcrypt.MinCost)
 	h := NewAuthHandler(svc)
 	r := gin.New()
 	r.Use(func(c *gin.Context) {
@@ -125,7 +143,7 @@ func TestAuthHandler_Login_BadPassword(t *testing.T) {
 	// layer being a black box: if creds are wrong, it returns
 	// ErrInvalidCredentials or ErrUserNotFound; WriteError maps
 	// both to 401.)
-	_, _, _ = svc.Register(context.Background(), "alice@example.com", "rightpw", "")
+	_, _, _, _ = svc.Register(context.Background(), "alice@example.com", "rightpw", "")
 	w := doJSON(t, r, http.MethodPost, "/api/v1/auth/login", map[string]string{
 		"email":    "alice@example.com",
 		"password": "wrongpw",
@@ -153,7 +171,7 @@ func TestAuthHandler_Login_BadPassword(t *testing.T) {
 // header. Returns 200 + {user: ...}.
 func TestAuthHandler_Me_HappyPath(t *testing.T) {
 	r, svc := newAuthTestEnv(t)
-	u, _, _ := svc.Register(context.Background(), "alice@example.com", "supersecret", "")
+	u, _, _, _ := svc.Register(context.Background(), "alice@example.com", "supersecret", "")
 
 	w := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/auth/me", nil)

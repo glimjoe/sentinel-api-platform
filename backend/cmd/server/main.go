@@ -105,12 +105,15 @@ func run() error {
 
 	// Auth wiring (Phase 1).
 	userRepo := repository.NewUserRepo(db)
-	authSvc := service.NewAuthService(userRepo, cfg.Auth.AccessSecret, cfg.Auth.AccessTTL, cfg.Auth.BcryptCost)
+	refreshTokenRepo := repository.NewRefreshTokenRepo(db)
+	authSvc := service.NewAuthService(userRepo, refreshTokenRepo, cfg.Auth.AccessSecret, cfg.Auth.AccessTTL, cfg.Auth.BcryptCost)
 	authH := api.NewAuthHandler(authSvc)
 	r.POST("/api/v1/auth/register", authH.Register)
 	r.POST("/api/v1/auth/login", authH.Login)
+	r.POST("/api/v1/auth/refresh", authH.Refresh)
 	protected := r.Group("/api/v1", middleware.AuthRequired(cfg.Auth.AccessSecret))
 	protected.GET("/auth/me", authH.Me)
+	protected.POST("/auth/logout", authH.Logout)
 
 	// Project wiring (M2-F.A + M2-F.E).
 	projectRepo := repository.NewProjectRepo(db)
@@ -224,18 +227,22 @@ func run() error {
 		protected.POST("/projects/:pid/runs/:runId/cancel", middleware.RequireProjectRole(projectSvc,
 			model.ProjectRoleAdmin, model.ProjectRoleEngineer),
 			testRunH.Cancel)
-		protected.GET("/projects/:pid/runs/:runId/stream", middleware.RequireProjectRole(projectSvc,
+	// SSE stream uses URL query-param auth so EventSource can connect.
+	// EventSource does not support custom headers; JWT is passed as ?token=.
+	r.GET("/api/v1/projects/:pid/runs/:runId/stream",
+		middleware.TokenQueryAuth(cfg.Auth.AccessSecret),
+		middleware.RequireProjectRole(projectSvc,
 			model.ProjectRoleAdmin, model.ProjectRoleEngineer, model.ProjectRoleViewer),
-			testRunH.Stream)
+		testRunH.Stream)
 
 	// Mock engine wiring (Phase 2 M1). The public /mock/:projectSlug/*path
 	// route is registered OUTSIDE the protected group — anyone with the
 	// project slug can hit it (this is the whole point of a mock server).
-	_ = repository.NewMockHitRepo(db) // M2: wire as HitRecorder
+	mockHitRepo := repository.NewMockHitRepo(db)
 	varbag := mock.NewRedisVarBag(rdb)
 	matcher := mock.NewMatcher()
 	extractor := mock.NewExtractor()
-	mockEngine := mock.NewEngine(projectRepo, apiRepo, mockRuleRepo, varbag, matcher, extractor, nil)
+	mockEngine := mock.NewEngine(projectRepo, apiRepo, mockRuleRepo, varbag, matcher, extractor, mockHitRepo)
 	r.Any("/mock/:projectSlug/*path", mockEngine.Serve)
 
 	// 6. HTTP server
