@@ -1,0 +1,76 @@
+-- Sentinel: 0004_test_runner (Phase 3)
+-- test_cases, test_runs, test_results
+
+CREATE TABLE IF NOT EXISTS test_cases (
+  id                   CHAR(26)      NOT NULL,
+  project_id           CHAR(26)      NOT NULL,
+  api_id               CHAR(26)      NULL,
+  name                 VARCHAR(255)  NOT NULL,
+  description          VARCHAR(1024) NOT NULL DEFAULT '',
+  method               VARCHAR(16)   NOT NULL,
+  path                 VARCHAR(512)  NOT NULL,
+  headers_json         JSON          NULL,
+  query_json           JSON          NULL,
+  body_json            JSON          NULL,
+  expected_status      INT           NOT NULL DEFAULT 200,
+  expected_body_json   JSON          NULL,
+  expected_body_match  ENUM('exact','contains','jsonpath','schema','regex','none') NOT NULL DEFAULT 'none',
+  expected_body_pattern TEXT         NULL,
+  assertions_json      JSON          NULL,
+  tags_json            JSON          NULL,
+  priority             ENUM('p0','p1','p2','p3') NOT NULL DEFAULT 'p2',
+  ai_generated         TINYINT(1)    NOT NULL DEFAULT 0,
+  created_by           CHAR(26)      NULL,
+  created_at           DATETIME(3)   NOT NULL,
+  updated_at           DATETIME(3)   NOT NULL,
+  PRIMARY KEY (id),
+  KEY idx_test_cases_project_priority (project_id, priority),
+  CONSTRAINT fk_test_cases_project FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
+  CONSTRAINT fk_test_cases_api     FOREIGN KEY (api_id)     REFERENCES apis(id)     ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS test_runs (
+  id              CHAR(26)    NOT NULL,
+  project_id      CHAR(26)    NOT NULL,
+  name            VARCHAR(255) NOT NULL,
+  status          ENUM('queued','running','success','failed','cancelled','partial') NOT NULL DEFAULT 'queued',
+  mode            ENUM('sequential','parallel') NOT NULL DEFAULT 'sequential',
+  concurrency     INT         NOT NULL DEFAULT 1,
+  target_base_url VARCHAR(512) NOT NULL DEFAULT '',
+  case_filter_json JSON       NULL,
+  total           INT         NOT NULL DEFAULT 0,
+  passed          INT         NOT NULL DEFAULT 0,
+  failed          INT         NOT NULL DEFAULT 0,
+  errored         INT         NOT NULL DEFAULT 0,
+  skipped         INT         NOT NULL DEFAULT 0,
+  started_at      DATETIME(3) NULL,
+  finished_at     DATETIME(3) NULL,
+  triggered_by    CHAR(26)    NULL,
+  trigger_type    ENUM('manual','schedule','api') NOT NULL DEFAULT 'manual',
+  created_at      DATETIME(3) NOT NULL,
+  PRIMARY KEY (id),
+  KEY idx_test_runs_project_status (project_id, status, created_at DESC),
+  CONSTRAINT fk_test_runs_project FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS test_results (
+  id                     CHAR(26)    NOT NULL,
+  run_id                 CHAR(26)    NOT NULL,
+  case_id                CHAR(26)    NOT NULL,
+  status                 ENUM('pass','fail','error','skip') NOT NULL,
+  actual_status          INT         NULL,
+  actual_headers_json    JSON        NULL,
+  actual_body_json       JSON        NULL,
+  assertion_failures_json JSON       NULL,
+  duration_ms            INT         NOT NULL DEFAULT 0,
+  error_msg              VARCHAR(2048) NOT NULL DEFAULT '',
+  ai_attribution_json    JSON        NULL,
+  attempt                INT         NOT NULL DEFAULT 1,
+  created_at             DATETIME(3) NOT NULL,
+  PRIMARY KEY (id),
+  KEY idx_test_results_run (run_id),
+  KEY idx_test_results_case (case_id),
+  KEY idx_test_results_run_status (run_id, status),
+  CONSTRAINT fk_test_results_run  FOREIGN KEY (run_id)  REFERENCES test_runs(id) ON DELETE CASCADE,
+  CONSTRAINT fk_test_results_case FOREIGN KEY (case_id) REFERENCES test_cases(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

@@ -51,6 +51,32 @@ func AuthRequired(secret string) gin.HandlerFunc {
 	}
 }
 
+// TokenQueryAuth validates a JWT passed as the ?token= query parameter.
+// Used for SSE endpoints where EventSource cannot send custom headers.
+func TokenQueryAuth(secret string) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		token := c.Query("token")
+		if token == "" {
+			abort401(c, "missing token query parameter")
+			return
+		}
+		claims, err := jwt.Parse(secret, token)
+		if err != nil {
+			switch {
+			case errors.Is(err, errs.ErrTokenExpired):
+				abort401(c, "token expired")
+			default:
+				abort401(c, "invalid token")
+			}
+			return
+		}
+		c.Set(CtxUserID, claims.UserID)
+		c.Set(CtxEmail, claims.Email)
+		c.Set(CtxRole, claims.Role)
+		c.Next()
+	}
+}
+
 func abort401(c *gin.Context, msg string) {
 	c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": msg})
 }

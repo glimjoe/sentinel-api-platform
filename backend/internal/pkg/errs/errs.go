@@ -44,4 +44,16 @@ var (
 	// wrap it with fmt.Errorf("...: %w", ErrNotFound) so services can match
 	// via errors.Is(err, errs.ErrNotFound).
 	ErrNotFound = errors.New("record not found")
+
+	// ErrForbidden is the domain-level "caller lacks the required role"
+	// sentinel. Service layer returns this directly (without wrapping) when
+	// RBAC checks fail, so handlers map it to 403 via errors.Is.
+	ErrForbidden = errors.New("forbidden")
+
+	// ErrConflict is the domain-level "unique constraint violated" sentinel.
+	// Repositories wrap driver errors (e.g. MySQL 1062 → ErrConflict) so
+	// services can match via errors.Is(err, errs.ErrConflict). Used by
+	// project_service for duplicate slugs, and will be reused by api_rule
+	// service for duplicate path+method combinations.
+	ErrConflict = errors.New("conflict")
 )

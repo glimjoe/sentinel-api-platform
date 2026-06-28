@@ -58,9 +58,50 @@ func (f *fakeUserStore) FindByID(_ context.Context, id string) (*model.User, err
 	return nil, fmt.Errorf("fake_user_store: %w", errs.ErrNotFound)
 }
 
+// fakeRefreshTokenStore satisfies refreshTokenStore for tests.
+type fakeRefreshTokenStore struct {
+	tokens map[string]string // raw → userID
+}
+
+func newFakeRefreshTokenStore() *fakeRefreshTokenStore {
+	return &fakeRefreshTokenStore{tokens: make(map[string]string)}
+}
+
+func (f *fakeRefreshTokenStore) GenerateToken(_ context.Context, userID, _, _ string) (string, error) {
+	raw := fmt.Sprintf("rt-%s-%d", userID, len(f.tokens)+1)
+	f.tokens[raw] = userID
+	return raw, nil
+}
+
+func (f *fakeRefreshTokenStore) Consume(_ context.Context, rawToken string) (string, error) {
+	uid, ok := f.tokens[rawToken]
+	if !ok {
+		return "", fmt.Errorf("invalid token")
+	}
+	delete(f.tokens, rawToken)
+	return uid, nil
+}
+
+func (f *fakeRefreshTokenStore) RevokeAllForUser(_ context.Context, userID string) error {
+	for raw, uid := range f.tokens {
+		if uid == userID {
+			delete(f.tokens, raw)
+		}
+	}
+	return nil
+}
+
+func (f *fakeRefreshTokenStore) LookupUserID(_ context.Context, rawToken string) (string, error) {
+	uid, ok := f.tokens[rawToken]
+	if !ok {
+		return "", fmt.Errorf("invalid token")
+	}
+	return uid, nil
+}
+
 // newTestService wires AuthService against the fake with sane defaults.
 func newTestService(users userStore) *AuthService {
-	return NewAuthService(users, "test-secret-must-be-long-enough-for-hs256",
+	return NewAuthService(users, newFakeRefreshTokenStore(), "test-secret-must-be-long-enough-for-hs256",
 		15*time.Minute, 4) // cost=4 keeps tests fast
 }
 
@@ -68,7 +109,7 @@ func TestAuthService_Register_Success(t *testing.T) {
 	users := newFakeUserStore()
 	svc := newTestService(users)
 
-	u, token, err := svc.Register(context.Background(),
+	u, token, _, err := svc.Register(context.Background(),
 		"alice@example.com", "hunter2hunter", "Alice")
 
 	require.NoError(t, err)
@@ -89,12 +130,12 @@ func TestAuthService_Register_DuplicateEmail(t *testing.T) {
 	svc := newTestService(users)
 
 	// First registration succeeds.
-	_, _, err := svc.Register(context.Background(),
+	_, _, _, err := svc.Register(context.Background(),
 		"alice@example.com", "hunter2hunter", "Alice")
 	require.NoError(t, err)
 
 	// Second registration with same email triggers fakeUserStore's MySQL 1062 path.
-	_, _, err = svc.Register(context.Background(),
+	_, _, _, err = svc.Register(context.Background(),
 		"alice@example.com", "differentpass123", "Alice2")
 	assert.ErrorIs(t, err, errs.ErrEmailTaken)
 }
@@ -109,7 +150,7 @@ func TestAuthService_Register_InvalidInput(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			_, _, err := svc.Register(context.Background(), tc.email, tc.plain, "")
+			_, _, _, err := svc.Register(context.Background(), tc.email, tc.plain, "")
 			require.Error(t, err)
 			assert.True(t, errors.Is(err, errs.ErrBadRequest),
 				"expected ErrBadRequest, got %v", err)
@@ -122,11 +163,11 @@ func TestAuthService_Login_Success(t *testing.T) {
 	svc := newTestService(users)
 
 	// Seed via Register so the bcrypt hash is produced the same way prod does.
-	_, _, err := svc.Register(context.Background(),
+	_, _, _, err := svc.Register(context.Background(),
 		"alice@example.com", "hunter2hunter", "")
 	require.NoError(t, err)
 
-	u, token, err := svc.Login(context.Background(),
+	u, token, _, err := svc.Login(context.Background(),
 		"ALICE@example.com", "hunter2hunter") // also verifies email lowercase normalisation
 
 	require.NoError(t, err)
@@ -138,7 +179,7 @@ func TestAuthService_Login_Success(t *testing.T) {
 func TestAuthService_Login_RejectsBadCredentials(t *testing.T) {
 	users := newFakeUserStore()
 	svc := newTestService(users)
-	_, _, _ = svc.Register(context.Background(),
+	_, _, _, _ = svc.Register(context.Background(),
 		"alice@example.com", "hunter2hunter", "")
 
 	tests := []struct {
@@ -149,7 +190,7 @@ func TestAuthService_Login_RejectsBadCredentials(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			_, _, err := svc.Login(context.Background(), tc.email, tc.plain)
+			_, _, _, err := svc.Login(context.Background(), tc.email, tc.plain)
 			require.Error(t, err)
 			assert.ErrorIs(t, err, errs.ErrInvalidCredentials)
 		})
@@ -160,7 +201,7 @@ func TestAuthService_Login_InactiveUser(t *testing.T) {
 	users := newFakeUserStore()
 	svc := newTestService(users)
 
-	u, _, err := svc.Register(context.Background(),
+	u, _, _, err := svc.Register(context.Background(),
 		"alice@example.com", "hunter2hunter", "")
 	require.NoError(t, err)
 	users.byID[u.ID].IsActive = false
@@ -168,7 +209,7 @@ func TestAuthService_Login_InactiveUser(t *testing.T) {
 	// Inactive accounts return ErrInvalidCredentials (not ErrUserInactive) to
 	// prevent account enumeration — Login's caller can't distinguish this from
 	// unknown-email / wrong-password. ErrUserInactive is reserved for Me.
-	_, _, err = svc.Login(context.Background(),
+	_, _, _, err = svc.Login(context.Background(),
 		"alice@example.com", "hunter2hunter")
 	require.Error(t, err)
 	assert.ErrorIs(t, err, errs.ErrInvalidCredentials)
@@ -177,7 +218,7 @@ func TestAuthService_Login_InactiveUser(t *testing.T) {
 func TestAuthService_Me(t *testing.T) {
 	users := newFakeUserStore()
 	svc := newTestService(users)
-	seeded, _, err := svc.Register(context.Background(),
+	seeded, _, _, err := svc.Register(context.Background(),
 		"alice@example.com", "hunter2hunter", "Alice")
 	require.NoError(t, err)
 
