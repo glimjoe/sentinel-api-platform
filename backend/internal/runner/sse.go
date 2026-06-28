@@ -54,6 +54,14 @@ func (b *RedisEventBroker) Publish(ctx context.Context, evt *RunEvent) error {
 
 func (b *RedisEventBroker) Subscribe(ctx context.Context, runID string) (<-chan *RunEvent, func(), error) {
 	pubsub := b.rdb.Subscribe(ctx, runEventChannel+":"+runID)
+
+	// Wait for subscription confirmation so Publish calls that follow
+	// immediately won't lose events (required for test determinism).
+	if _, err := pubsub.Receive(ctx); err != nil {
+		pubsub.Close()
+		return nil, nil, fmt.Errorf("subscribe confirm: %w", err)
+	}
+
 	ch := make(chan *RunEvent, 16)
 
 	go func() {

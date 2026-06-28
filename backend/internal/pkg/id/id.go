@@ -1,21 +1,22 @@
 // Package id generates 26-char ULID identifiers used as primary keys.
-//
-// ULIDs are 128-bit, lexicographically sortable by time, and URL-safe — ideal
-// for primary keys that appear in API responses without forcing UUID dashes.
 package id
 
 import (
 	"crypto/rand"
+	"sync"
 	"time"
 
 	"github.com/oklog/ulid/v2"
 )
 
-// entropy is a package-level reader for ulid.Make. Safe for concurrent use.
-var entropy = ulid.Monotonic(rand.Reader, 0)
+var (
+	entropy = ulid.Monotonic(rand.Reader, 0)
+	mu      sync.Mutex // protects entropy (ulid.MonotonicEntropy is not concurrency-safe)
+)
 
 // New returns a fresh ULID string in canonical 26-char Crockford base32 form.
-// e.g. "01HXYZAB3CDEF4GHIJ5KLMNOPQ"
 func New() string {
+	mu.Lock()
+	defer mu.Unlock()
 	return ulid.MustNew(ulid.Timestamp(time.Now()), entropy).String()
 }
