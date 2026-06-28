@@ -163,6 +163,9 @@ func run() error {
 	protected.DELETE("/projects/:pid/apis/:apiId/tags/:tag", middleware.RequireProjectRole(projectSvc,
 		model.ProjectRoleAdmin, model.ProjectRoleEngineer),
 		apiH.RemoveTag)
+		protected.POST("/projects/:pid/apis/import-openapi", middleware.RequireProjectRole(projectSvc,
+			model.ProjectRoleAdmin, model.ProjectRoleEngineer),
+			apiH.ImportOpenAPI)
 
 	// MockRule routes (M2-F.D) — RBAC enforced at service layer.
 	protected.POST("/rules", mockRuleH.CreateRule)

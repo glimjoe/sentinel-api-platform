@@ -8,6 +8,7 @@
 //   DELETE /api/v1/projects/:pid/apis/:apiId       DeleteAPI       (admin)
 //   POST   /api/v1/projects/:pid/apis/:apiId/tags   AddTag          (admin/engineer)
 //   DELETE /api/v1/projects/:pid/apis/:apiId/tags/:tag RemoveTag      (admin/engineer)
+//   POST   /api/v1/projects/:pid/apis/import-openapi   ImportOpenAPI   (admin/engineer)
 package api
 
 import (
@@ -17,6 +18,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"github.com/glimjoe/sentinel-api-platform/internal/contract"
 	"github.com/glimjoe/sentinel-api-platform/internal/middleware"
 	"github.com/glimjoe/sentinel-api-platform/internal/model"
 	"github.com/glimjoe/sentinel-api-platform/internal/pkg/httpx"
@@ -206,6 +208,65 @@ func (h *APIHandler) RemoveTag(c *gin.Context) {
 		return
 	}
 	httpx.OK(c, updated)
+}
+
+type importOpenAPIRequest struct {
+	Spec string `json:"spec" binding:"required"`
+}
+
+// ImportOpenAPI handles POST /api/v1/projects/:pid/apis/import-openapi.
+// It parses the OpenAPI 3.x spec in the request body, extracts every
+// (path, method) pair, and bulk-creates them via the service layer.
+// Partial failures are reported in the response envelope's message.
+func (h *APIHandler) ImportOpenAPI(c *gin.Context) {
+	callerID := c.GetString("user_id")
+	if callerID == "" {
+		httpx.Fail(c, http.StatusInternalServerError, 50001, "user_id missing from request context — route not protected")
+		return
+	}
+	var req importOpenAPIRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		httpx.Fail(c, http.StatusBadRequest, 40000, err.Error())
+		return
+	}
+
+	doc, err := contract.Load([]byte(req.Spec))
+	if err != nil {
+		middleware.WriteError(c, err)
+		return
+	}
+
+	pid := c.Param("pid")
+	apis, err := contract.ExtractAPIs(doc, pid)
+	if err != nil {
+		middleware.WriteError(c, err)
+		return
+	}
+
+	created := make([]*model.API, 0, len(apis))
+	var failures []string
+	for _, a := range apis {
+		createdAPI, err := h.svc.Create(c.Request.Context(), callerID, pid, a.Name, a.Method, a.Path, a.OperationID)
+		if err != nil {
+			failures = append(failures, a.Method+" "+a.Path)
+			continue
+		}
+		created = append(created, createdAPI)
+	}
+
+	if len(failures) > 0 {
+		httpx.OK(c, gin.H{
+			"imported": len(created),
+			"skipped":  len(failures),
+			"total":    len(apis),
+			"failures": failures,
+		})
+		return
+	}
+	httpx.OK(c, gin.H{
+		"imported": len(created),
+		"total":    len(apis),
+	})
 }
 
 func decodeTags(raw []byte) []string {

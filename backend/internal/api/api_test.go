@@ -78,6 +78,7 @@ func newAPITestEngine(t *testing.T, svc *fakeAPIService, callerID string) *gin.E
 	r.DELETE("/api/v1/projects/:pid/apis/:apiId", h.DeleteAPI)
 	r.POST("/api/v1/projects/:pid/apis/:apiId/tags", h.AddTag)
 	r.DELETE("/api/v1/projects/:pid/apis/:apiId/tags/:tag", h.RemoveTag)
+	r.POST("/api/v1/projects/:pid/apis/import-openapi", h.ImportOpenAPI)
 	return r
 }
 
@@ -497,5 +498,86 @@ func TestRemoveTag_APINotFound(t *testing.T) {
 	r.ServeHTTP(w, req)
 	if w.Code != http.StatusNotFound {
 		t.Fatalf("status = %d, want 404; body=%s", w.Code, w.Body.String())
+	}
+}
+
+// ---------------------------------------------------------------------------
+// ImportOpenAPI
+// ---------------------------------------------------------------------------
+
+const importSpec = `{
+  "openapi": "3.0.3",
+  "info": {"title":"Mini","version":"1.0.0"},
+  "paths": {
+    "/pets": {
+      "get": {
+        "operationId": "listPets",
+        "summary": "List pets",
+        "responses": {"200":{"description":"OK"}}
+      },
+      "post": {
+        "operationId": "createPet",
+        "responses": {"201":{"description":"Created"}}
+      }
+    }
+  }
+}`
+
+func TestImportOpenAPI_HappyPath(t *testing.T) {
+	var created []string
+	svc := &fakeAPIService{
+		CreateFn: func(_ context.Context, _, projectID, name, method, path, _ string) (*model.API, error) {
+			if projectID != "01HP" {
+				t.Errorf("projectID = %q", projectID)
+			}
+			created = append(created, method+" "+path)
+			return &model.API{ID: "01HA-" + path, Name: name, Method: method, Path: path}, nil
+		},
+	}
+	r := newAPITestEngine(t, svc, "u-engineer")
+	body := map[string]string{"spec": importSpec}
+	bs, _ := json.Marshal(body)
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/projects/01HP/apis/import-openapi", bytes.NewReader(bs))
+	req.Header.Set("Content-Type", "application/json")
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", w.Code, w.Body.String())
+	}
+	if len(created) != 2 {
+		t.Errorf("created %d APIs, want 2: %v", len(created), created)
+	}
+}
+
+func TestImportOpenAPI_InvalidSpec(t *testing.T) {
+	svc := &fakeAPIService{
+		CreateFn: func(_ context.Context, _, _, _, _, _, _ string) (*model.API, error) {
+			t.Error("Create must not be called for invalid spec")
+			return nil, nil
+		},
+	}
+	r := newAPITestEngine(t, svc, "u-engineer")
+	body := map[string]string{"spec": "not-valid-openapi"}
+	bs, _ := json.Marshal(body)
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/projects/01HP/apis/import-openapi", bytes.NewReader(bs))
+	req.Header.Set("Content-Type", "application/json")
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400; body=%s", w.Code, w.Body.String())
+	}
+}
+
+func TestImportOpenAPI_MissingUserID(t *testing.T) {
+	svc := &fakeAPIService{}
+	r := newAPITestEngine(t, svc, "")
+	body := map[string]string{"spec": importSpec}
+	bs, _ := json.Marshal(body)
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/projects/01HP/apis/import-openapi", bytes.NewReader(bs))
+	req.Header.Set("Content-Type", "application/json")
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500; body=%s", w.Code, w.Body.String())
 	}
 }
