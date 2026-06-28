@@ -116,6 +116,8 @@ jobs:
       - name: Install Playwright browsers
         working-directory: frontend
         run: npx playwright install chromium --with-deps
+      - name: Prepare .env for backend
+        run: cp .env.example .env
       - name: Run migrations
         working-directory: backend
         env:
