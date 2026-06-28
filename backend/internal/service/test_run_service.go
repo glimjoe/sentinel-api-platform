@@ -104,6 +104,10 @@ func (s *TestRunService) Cancel(ctx context.Context, callerID, runID string) err
 	return s.store.Update(ctx, runID, map[string]any{"status": "cancelled"})
 }
 
+func (s *TestRunService) ExportResults(ctx context.Context, runID string) ([]*model.TestResult, error) {
+	return s.resultStore.ListByRun(ctx, runID)
+}
+
 func (s *TestRunService) FindByID(ctx context.Context, id string) (*model.TestRun, error) {
 	return s.store.FindByID(ctx, id)
 }

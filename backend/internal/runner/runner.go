@@ -10,9 +10,10 @@ import (
 	"github.com/glimjoe/sentinel-api-platform/internal/pkg/id"
 )
 
-// ResultPersister saves test results during a run.
+// ResultPersister manages test results.
 type ResultPersister interface {
 	Create(ctx context.Context, tr *model.TestResult) error
+	ListByRun(ctx context.Context, runID string) ([]*model.TestResult, error)
 }
 
 // RunUpdater updates test run aggregate counts after each case completes.
@@ -47,43 +48,10 @@ func Run(ctx context.Context, run *model.TestRun, cases []*model.TestCase, baseU
 		}
 	}
 
-	// Sequential execution (parallel deferred to later Phase 3 iteration)
-	for _, tc := range cases {
-		select {
-		case <-ctx.Done():
-			run.Status = "cancelled"
-			updater.Update(ctx, run.ID, map[string]any{"status": "cancelled", "finished_at": time.Now()})
-			if pub != nil {
-				pub.Publish(ctx, &RunEvent{
-					Type: "complete", RunID: run.ID,
-					Total: run.Total, Passed: run.Passed, Failed: run.Failed,
-					Errored: run.Errored, Skipped: run.Skipped,
-					Status: "cancelled", Timestamp: time.Now().Unix(),
-				})
-			}
-			return ctx.Err()
-		default:
-		}
-		result := Execute(ctx, tc, baseURL)
-		result.RunID = run.ID
-		result.ID = id.New()
-
-		// Persist result
-		if err := persister.Create(ctx, result); err != nil {
-			result.Status = "error"
-			result.ErrorMsg = fmt.Sprintf("persist: %v", err)
-		}
-		aggregate(result.Status)
-
-		// Publish progress
-		if pub != nil {
-			pub.Publish(ctx, &RunEvent{
-				Type: "progress", RunID: run.ID,
-				Total: run.Total, Passed: run.Passed, Failed: run.Failed,
-				Errored: run.Errored, Skipped: run.Skipped,
-				Status: "running", Timestamp: time.Now().Unix(),
-			})
-		}
+	if run.Mode == "parallel" && run.Concurrency > 1 {
+		runParallel(ctx, run, cases, baseURL, persister, pub, aggregate)
+	} else {
+		runSequential(ctx, run, cases, baseURL, persister, pub, updater, aggregate)
 	}
 
 	finished := time.Now()
@@ -112,4 +80,70 @@ func Run(ctx context.Context, run *model.TestRun, cases []*model.TestCase, baseU
 	})
 
 	return nil
+}
+
+func runSequential(ctx context.Context, run *model.TestRun, cases []*model.TestCase, baseURL string, persister ResultPersister, pub EventPublisher, updater RunUpdater, aggregate func(string)) {
+	for _, tc := range cases {
+		select {
+		case <-ctx.Done():
+			run.Status = "cancelled"
+			updater.Update(ctx, run.ID, map[string]any{"status": "cancelled", "finished_at": time.Now()})
+			if pub != nil {
+				pub.Publish(ctx, &RunEvent{
+					Type: "complete", RunID: run.ID, Status: "cancelled",
+					Timestamp: time.Now().Unix(),
+				})
+			}
+			return
+		default:
+		}
+		execOne(ctx, run, tc, baseURL, persister, pub, aggregate)
+	}
+}
+
+func runParallel(ctx context.Context, run *model.TestRun, cases []*model.TestCase, baseURL string, persister ResultPersister, pub EventPublisher, aggregate func(string)) {
+	sem := make(chan struct{}, run.Concurrency)
+	var wg sync.WaitGroup
+
+	for _, tc := range cases {
+		select {
+		case <-ctx.Done():
+			run.Status = "cancelled"
+			if pub != nil {
+				pub.Publish(ctx, &RunEvent{Type: "complete", RunID: run.ID, Status: "cancelled", Timestamp: time.Now().Unix()})
+			}
+			wg.Wait()
+			return
+		default:
+		}
+		wg.Add(1)
+		sem <- struct{}{}
+		go func(tc *model.TestCase) {
+			defer wg.Done()
+			defer func() { <-sem }()
+			execOne(ctx, run, tc, baseURL, persister, pub, aggregate)
+		}(tc)
+	}
+	wg.Wait()
+}
+
+func execOne(ctx context.Context, run *model.TestRun, tc *model.TestCase, baseURL string, persister ResultPersister, pub EventPublisher, aggregate func(string)) {
+	result := Execute(ctx, tc, baseURL)
+	result.RunID = run.ID
+	result.ID = id.New()
+
+	if err := persister.Create(ctx, result); err != nil {
+		result.Status = "error"
+		result.ErrorMsg = fmt.Sprintf("persist: %v", err)
+	}
+	aggregate(result.Status)
+
+	if pub != nil {
+		pub.Publish(ctx, &RunEvent{
+			Type: "progress", RunID: run.ID,
+			Total: run.Total, Passed: run.Passed, Failed: run.Failed,
+			Errored: run.Errored, Skipped: run.Skipped,
+			Status: "running", Timestamp: time.Now().Unix(),
+		})
+	}
 }
