@@ -43,7 +43,9 @@ func Run(ctx context.Context, run *model.TestRun, cases []*model.TestCase, baseU
 	}))
 
 	var mu sync.Mutex
-	aggregate := func(status string) {
+	// aggregate increments counters under lock and returns a snapshot
+	// so callers can read without racing on run.Passed/Failed/Errored.
+	aggregate := func(status string) (int, int, int, int) {
 		mu.Lock()
 		defer mu.Unlock()
 		switch status {
@@ -56,6 +58,7 @@ func Run(ctx context.Context, run *model.TestRun, cases []*model.TestCase, baseU
 		case "skip":
 			run.Skipped++
 		}
+		return run.Passed, run.Failed, run.Errored, run.Skipped
 	}
 
 	if run.Mode == "parallel" && run.Concurrency > 1 {
@@ -100,7 +103,7 @@ func Run(ctx context.Context, run *model.TestRun, cases []*model.TestCase, baseU
 	return nil
 }
 
-func runSequential(ctx context.Context, run *model.TestRun, cases []*model.TestCase, baseURL string, persister ResultPersister, pub EventPublisher, updater RunUpdater, aggregate func(string), hook PostExecuteHook) {
+func runSequential(ctx context.Context, run *model.TestRun, cases []*model.TestCase, baseURL string, persister ResultPersister, pub EventPublisher, updater RunUpdater, aggregate func(string) (int, int, int, int), hook PostExecuteHook) {
 	for _, tc := range cases {
 		select {
 		case <-ctx.Done():
@@ -119,7 +122,7 @@ func runSequential(ctx context.Context, run *model.TestRun, cases []*model.TestC
 	}
 }
 
-func runParallel(ctx context.Context, run *model.TestRun, cases []*model.TestCase, baseURL string, persister ResultPersister, pub EventPublisher, updater RunUpdater, aggregate func(string), hook PostExecuteHook) {
+func runParallel(ctx context.Context, run *model.TestRun, cases []*model.TestCase, baseURL string, persister ResultPersister, pub EventPublisher, updater RunUpdater, aggregate func(string) (int, int, int, int), hook PostExecuteHook) {
 	sem := make(chan struct{}, run.Concurrency)
 	var wg sync.WaitGroup
 
@@ -158,7 +161,7 @@ func logPubErr(err error) {
 	}
 }
 
-func execOne(ctx context.Context, run *model.TestRun, tc *model.TestCase, baseURL string, persister ResultPersister, pub EventPublisher, aggregate func(string), hook PostExecuteHook) {
+func execOne(ctx context.Context, run *model.TestRun, tc *model.TestCase, baseURL string, persister ResultPersister, pub EventPublisher, aggregate func(string) (int, int, int, int), hook PostExecuteHook) {
 	result := Execute(ctx, tc, baseURL)
 	result.RunID = run.ID
 	result.ID = id.New()
@@ -173,15 +176,14 @@ func execOne(ctx context.Context, run *model.TestRun, tc *model.TestCase, baseUR
 		result.Status = "error"
 		result.ErrorMsg = fmt.Sprintf("persist: %v", err)
 	}
-	aggregate(result.Status)
+	p, f, e, s := aggregate(result.Status)
 
 	if pub != nil {
 		logPubErr(pub.Publish(ctx, &RunEvent{
 			Type: "progress", RunID: run.ID,
-			Total: run.Total, Passed: run.Passed, Failed: run.Failed,
-			Errored: run.Errored, Skipped: run.Skipped,
+			Total: run.Total, Passed: p, Failed: f,
+			Errored: e, Skipped: s,
 			Status: "running", Timestamp: time.Now().Unix(),
 		}))
 	}
-
 }

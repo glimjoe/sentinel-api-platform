@@ -2,6 +2,7 @@ package runner
 
 import (
 	"context"
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -10,37 +11,49 @@ import (
 	"github.com/glimjoe/sentinel-api-platform/internal/model"
 )
 
-// fakePersister implements ResultPersister for tests.
+// fakePersister implements ResultPersister for tests. Mutex-protected for
+// parallel-mode tests where goroutines call Create concurrently.
 type fakePersister struct {
+	mu      sync.Mutex
 	results []*model.TestResult
 }
 
 func (f *fakePersister) Create(ctx context.Context, tr *model.TestResult) error {
+	f.mu.Lock()
 	f.results = append(f.results, tr)
+	f.mu.Unlock()
 	return nil
 }
 
 func (f *fakePersister) ListByRun(ctx context.Context, runID string) ([]*model.TestResult, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	return f.results, nil
 }
 
-// fakeUpdater implements RunUpdater for tests.
+// fakeUpdater implements RunUpdater for tests. Mutex-protected.
 type fakeUpdater struct {
+	mu      sync.Mutex
 	updates []map[string]any
 }
 
 func (f *fakeUpdater) Update(ctx context.Context, id string, fields map[string]any) error {
+	f.mu.Lock()
 	f.updates = append(f.updates, fields)
+	f.mu.Unlock()
 	return nil
 }
 
-// fakePublisher implements EventPublisher for tests.
+// fakePublisher implements EventPublisher for tests. Mutex-protected.
 type fakePublisher struct {
+	mu     sync.Mutex
 	events []*RunEvent
 }
 
 func (f *fakePublisher) Publish(ctx context.Context, event *RunEvent) error {
+	f.mu.Lock()
 	f.events = append(f.events, event)
+	f.mu.Unlock()
 	return nil
 }
 
