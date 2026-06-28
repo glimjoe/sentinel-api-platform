@@ -14,4 +14,4 @@ CREATE TABLE IF NOT EXISTS ai_usage (
   KEY idx_ai_usage_created (created_at),
   KEY idx_ai_usage_function (function),
   KEY idx_ai_usage_project (project_id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
