@@ -20,9 +20,8 @@ type RunUpdater interface {
 	Update(ctx context.Context, id string, fields map[string]any) error
 }
 
-// Run orchestrates a test run. It loads the given cases, executes each one,
-// persists results, and updates the run's aggregate counters.
-func Run(ctx context.Context, run *model.TestRun, cases []*model.TestCase, baseURL string, persister ResultPersister, updater RunUpdater) error {
+// Run orchestrates a test run. Publishes SSE events via the optional publisher.
+func Run(ctx context.Context, run *model.TestRun, cases []*model.TestCase, baseURL string, persister ResultPersister, updater RunUpdater, pub EventPublisher) error {
 	if run == nil {
 		return fmt.Errorf("run is nil")
 	}
@@ -60,6 +59,16 @@ func Run(ctx context.Context, run *model.TestRun, cases []*model.TestCase, baseU
 			result.ErrorMsg = fmt.Sprintf("persist: %v", err)
 		}
 		aggregate(result.Status)
+
+		// Publish progress
+		if pub != nil {
+			pub.Publish(ctx, &RunEvent{
+				Type: "progress", RunID: run.ID,
+				Total: run.Total, Passed: run.Passed, Failed: run.Failed,
+				Errored: run.Errored, Skipped: run.Skipped,
+				Status: "running", Timestamp: time.Now().Unix(),
+			})
+		}
 	}
 
 	finished := time.Now()
@@ -68,6 +77,15 @@ func Run(ctx context.Context, run *model.TestRun, cases []*model.TestCase, baseU
 		run.Status = "failed"
 	} else {
 		run.Status = "success"
+	}
+
+	if pub != nil {
+		pub.Publish(ctx, &RunEvent{
+			Type: "complete", RunID: run.ID,
+			Total: run.Total, Passed: run.Passed, Failed: run.Failed,
+			Errored: run.Errored, Skipped: run.Skipped,
+			Status: run.Status, Timestamp: time.Now().Unix(),
+		})
 	}
 
 	updater.Update(ctx, run.ID, map[string]any{

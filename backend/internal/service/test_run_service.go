@@ -18,14 +18,15 @@ type testRunStore interface {
 }
 
 type TestRunService struct {
-	store        testRunStore
-	caseStore    testCaseStore
-	resultStore  runner.ResultPersister
-	roles        projectRoleChecker
+	store       testRunStore
+	caseStore   testCaseStore
+	resultStore runner.ResultPersister
+	roles       projectRoleChecker
+	publisher   runner.EventPublisher
 }
 
-func NewTestRunService(store testRunStore, caseStore testCaseStore, resultStore runner.ResultPersister, roles projectRoleChecker) *TestRunService {
-	return &TestRunService{store: store, caseStore: caseStore, resultStore: resultStore, roles: roles}
+func NewTestRunService(store testRunStore, caseStore testCaseStore, resultStore runner.ResultPersister, roles projectRoleChecker, pub runner.EventPublisher) *TestRunService {
+	return &TestRunService{store: store, caseStore: caseStore, resultStore: resultStore, roles: roles, publisher: pub}
 }
 
 func (s *TestRunService) Create(ctx context.Context, callerID, projectID, name, targetBaseURL, mode string) (*model.TestRun, error) {
@@ -69,7 +70,7 @@ func (s *TestRunService) Start(ctx context.Context, callerID, runID string) (*mo
 	}
 
 	// Run synchronously for now (async via goroutine in handler)
-	if err := runner.Run(ctx, run, cases, run.TargetBaseURL, s.resultStore, s.store); err != nil {
+	if err := runner.Run(ctx, run, cases, run.TargetBaseURL, s.resultStore, s.store, s.publisher); err != nil {
 		return nil, err
 	}
 	return s.store.FindByID(ctx, runID)

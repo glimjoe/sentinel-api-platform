@@ -21,6 +21,7 @@ import (
 	"github.com/glimjoe/sentinel-api-platform/internal/middleware"
 	"github.com/glimjoe/sentinel-api-platform/internal/mock"
 	"github.com/glimjoe/sentinel-api-platform/internal/model"
+	"github.com/glimjoe/sentinel-api-platform/internal/runner"
 	"github.com/glimjoe/sentinel-api-platform/internal/pkg/config"
 	"github.com/glimjoe/sentinel-api-platform/internal/pkg/logger"
 	"github.com/glimjoe/sentinel-api-platform/internal/repository"
@@ -184,10 +185,11 @@ func run() error {
 	testCaseRepo := repository.NewTestCaseRepo(db)
 	testResultRepo := repository.NewTestResultRepo(db)
 	testRunRepo := repository.NewTestRunRepo(db)
+	broker := runner.NewRedisEventBroker(rdb)
 	testCaseSvc := service.NewTestCaseService(testCaseRepo, projectSvc)
-	testRunSvc := service.NewTestRunService(testRunRepo, testCaseRepo, testResultRepo, projectSvc)
+	testRunSvc := service.NewTestRunService(testRunRepo, testCaseRepo, testResultRepo, projectSvc, broker)
 	testCaseH := api.NewTestCaseHandler(testCaseSvc)
-	testRunH := api.NewTestRunHandler(testRunSvc)
+	testRunH := api.NewTestRunHandler(testRunSvc, broker)
 
 	protected.POST("/projects/:pid/cases", middleware.RequireProjectRole(projectSvc,
 		model.ProjectRoleAdmin, model.ProjectRoleEngineer),
@@ -216,6 +218,9 @@ func run() error {
 	protected.GET("/projects/:pid/runs/:runId", middleware.RequireProjectRole(projectSvc,
 		model.ProjectRoleAdmin, model.ProjectRoleEngineer, model.ProjectRoleViewer),
 		testRunH.Get)
+		protected.GET("/projects/:pid/runs/:runId/stream", middleware.RequireProjectRole(projectSvc,
+			model.ProjectRoleAdmin, model.ProjectRoleEngineer, model.ProjectRoleViewer),
+			testRunH.Stream)
 
 	// Mock engine wiring (Phase 2 M1). The public /mock/:projectSlug/*path
 	// route is registered OUTSIDE the protected group — anyone with the

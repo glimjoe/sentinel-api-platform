@@ -1,18 +1,25 @@
 package api
 
 import (
+	"context"
+	"encoding/json"
+	"fmt"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
 
 	"github.com/glimjoe/sentinel-api-platform/internal/pkg/httpx"
+	"github.com/glimjoe/sentinel-api-platform/internal/runner"
 	"github.com/glimjoe/sentinel-api-platform/internal/service"
 )
 
-type TestRunHandler struct{ svc *service.TestRunService }
+type TestRunHandler struct {
+	svc    *service.TestRunService
+	broker runner.EventSubscriber
+}
 
-func NewTestRunHandler(svc *service.TestRunService) *TestRunHandler {
-	return &TestRunHandler{svc: svc}
+func NewTestRunHandler(svc *service.TestRunService, broker runner.EventSubscriber) *TestRunHandler {
+	return &TestRunHandler{svc: svc, broker: broker}
 }
 
 type createRunReq struct {
@@ -66,4 +73,43 @@ func (h *TestRunHandler) Get(c *gin.Context) {
 		return
 	}
 	httpx.OK(c, run)
+}
+
+// Stream handles GET /api/v1/projects/:pid/runs/:runId/stream — SSE.
+func (h *TestRunHandler) Stream(c *gin.Context) {
+	runID := c.Param("runId")
+	if h.broker == nil {
+		httpx.Fail(c, http.StatusNotImplemented, 50100, "SSE not configured")
+		return
+	}
+
+	c.Writer.Header().Set("Content-Type", "text/event-stream")
+	c.Writer.Header().Set("Cache-Control", "no-cache")
+	c.Writer.Header().Set("Connection", "keep-alive")
+	c.Writer.Header().Set("X-Accel-Buffering", "no")
+
+	ctx, cancel := context.WithCancel(c.Request.Context())
+	defer cancel()
+
+	ch, cleanup, err := h.broker.Subscribe(ctx, runID)
+	if err != nil {
+		httpx.Fail(c, http.StatusInternalServerError, 50000, err.Error())
+		return
+	}
+	defer cleanup()
+
+	flusher, ok := c.Writer.(http.Flusher)
+	if !ok {
+		httpx.Fail(c, http.StatusInternalServerError, 50000, "streaming not supported")
+		return
+	}
+
+	for evt := range ch {
+		data, _ := json.Marshal(evt)
+		fmt.Fprintf(c.Writer, "data: %s\n\n", data)
+		flusher.Flush()
+		if evt.Type == "complete" {
+			return
+		}
+	}
 }
