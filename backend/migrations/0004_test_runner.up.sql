@@ -27,7 +27,7 @@ CREATE TABLE IF NOT EXISTS test_cases (
   KEY idx_test_cases_project_priority (project_id, priority),
   CONSTRAINT fk_test_cases_project FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
   CONSTRAINT fk_test_cases_api     FOREIGN KEY (api_id)     REFERENCES apis(id)     ON DELETE SET NULL
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS test_runs (
   id              CHAR(26)    NOT NULL,
@@ -51,7 +51,7 @@ CREATE TABLE IF NOT EXISTS test_runs (
   PRIMARY KEY (id),
   KEY idx_test_runs_project_status (project_id, status, created_at DESC),
   CONSTRAINT fk_test_runs_project FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS test_results (
   id                     CHAR(26)    NOT NULL,
@@ -73,4 +73,4 @@ CREATE TABLE IF NOT EXISTS test_results (
   KEY idx_test_results_run_status (run_id, status),
   CONSTRAINT fk_test_results_run  FOREIGN KEY (run_id)  REFERENCES test_runs(id) ON DELETE CASCADE,
   CONSTRAINT fk_test_results_case FOREIGN KEY (case_id) REFERENCES test_cases(id) ON DELETE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
