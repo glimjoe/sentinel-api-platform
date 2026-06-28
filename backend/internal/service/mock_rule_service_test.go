@@ -247,3 +247,209 @@ func (f *fakeMockRuleStore) Delete(_ context.Context, id string) error {
 	delete(f.rows, id)
 	return nil
 }
+
+func TestMockRuleService_Delete_HappyPath(t *testing.T) {
+	rules, roles := newFakeMockRuleStore(), newFakeMockRoleChecker()
+	roles.roleByUser["proj-1:user-1"] = model.ProjectRoleAdmin
+	svc := NewMockRuleService(rules, roles)
+
+	r, _ := svc.Create(context.Background(), "user-1", "proj-1", "api-1", CreateRuleSpec{Name: "x", MatchJSON: json.RawMessage(`{}`)})
+	err := svc.Delete(context.Background(), "user-1", "proj-1", r.ID)
+	if err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+	_, err = svc.FindByID(context.Background(), r.ID)
+	if !errors.Is(err, errs.ErrNotFound) {
+		t.Errorf("expected ErrNotFound after delete, got %v", err)
+	}
+}
+
+func TestMockRuleService_Delete_ViewerForbidden(t *testing.T) {
+	rules, roles := newFakeMockRuleStore(), newFakeMockRoleChecker()
+	roles.roleByUser["proj-1:user-1"] = model.ProjectRoleAdmin
+	roles.roleByUser["proj-1:user-2"] = model.ProjectRoleViewer
+	svc := NewMockRuleService(rules, roles)
+
+	r, _ := svc.Create(context.Background(), "user-1", "proj-1", "api-1", CreateRuleSpec{Name: "x", MatchJSON: json.RawMessage(`{}`)})
+	err := svc.Delete(context.Background(), "user-2", "proj-1", r.ID)
+	if !errors.Is(err, errs.ErrForbidden) {
+		t.Errorf("err = %v, want ErrForbidden", err)
+	}
+}
+
+func TestMockRuleService_GetHitCount(t *testing.T) {
+	rules, roles := newFakeMockRuleStore(), newFakeMockRoleChecker()
+	roles.roleByUser["proj-1:user-1"] = model.ProjectRoleAdmin
+	svc := NewMockRuleService(rules, roles)
+
+	r, _ := svc.Create(context.Background(), "user-1", "proj-1", "api-1", CreateRuleSpec{Name: "x", MatchJSON: json.RawMessage(`{}`)})
+	_ = svc.IncrementHitCount(context.Background(), r.ID)
+	_ = svc.IncrementHitCount(context.Background(), r.ID)
+
+	count, err := svc.GetHitCount(context.Background(), r.ID)
+	if err != nil {
+		t.Fatalf("GetHitCount: %v", err)
+	}
+	if count != 2 {
+		t.Errorf("count = %d, want 2", count)
+	}
+}
+
+func TestMockRuleService_GetHitCount_NotFound(t *testing.T) {
+	svc := NewMockRuleService(newFakeMockRuleStore(), newFakeMockRoleChecker())
+	_, err := svc.GetHitCount(context.Background(), "missing")
+	if !errors.Is(err, errs.ErrNotFound) {
+		t.Errorf("err = %v, want ErrNotFound", err)
+	}
+}
+
+func TestMockRuleService_Update_HappyPath(t *testing.T) {
+	rules, roles := newFakeMockRuleStore(), newFakeMockRoleChecker()
+	roles.roleByUser["proj-1:user-1"] = model.ProjectRoleEngineer
+	svc := NewMockRuleService(rules, roles)
+
+	r, _ := svc.Create(context.Background(), "user-1", "proj-1", "api-1", CreateRuleSpec{Name: "old", Priority: 10, MatchJSON: json.RawMessage(`{}`)})
+	updated, err := svc.Update(context.Background(), "user-1", "proj-1", r.ID, map[string]any{"name": "new", "priority": 99})
+	if err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	if updated.Name != "new" {
+		t.Errorf("Name = %s, want new", updated.Name)
+	}
+	if updated.Priority != 99 {
+		t.Errorf("Priority = %d, want 99", updated.Priority)
+	}
+}
+
+func TestMockRuleService_Update_NotFound(t *testing.T) {
+	rules, roles := newFakeMockRuleStore(), newFakeMockRoleChecker()
+	roles.roleByUser["proj-1:user-1"] = model.ProjectRoleAdmin
+	svc := NewMockRuleService(rules, roles)
+
+	_, err := svc.Update(context.Background(), "user-1", "proj-1", "missing", map[string]any{"priority": 50})
+	if !errors.Is(err, errs.ErrNotFound) {
+		t.Errorf("err = %v, want ErrNotFound", err)
+	}
+}
+
+func TestMockRuleService_HandlerAliases(t *testing.T) {
+	rules, roles := newFakeMockRuleStore(), newFakeMockRoleChecker()
+	roles.roleByUser["proj-1:user-1"] = model.ProjectRoleAdmin
+	svc := NewMockRuleService(rules, roles)
+
+	// CreateRule → Create
+	r, err := svc.CreateRule(context.Background(), "user-1", "proj-1", "api-1", CreateRuleSpec{Name: "rule1", MatchJSON: json.RawMessage(`{}`)})
+	if err != nil {
+		t.Fatalf("CreateRule: %v", err)
+	}
+
+	// GetRule → FindByID
+	r2, err := svc.GetRule(context.Background(), r.ID)
+	if err != nil {
+		t.Fatalf("GetRule: %v", err)
+	}
+	if r2.Name != "rule1" {
+		t.Errorf("GetRule Name = %s", r2.Name)
+	}
+
+	// ListRules → ListByAPI
+	list, err := svc.ListRules(context.Background(), "api-1")
+	if err != nil {
+		t.Fatalf("ListRules: %v", err)
+	}
+	if len(list) != 1 {
+		t.Errorf("ListRules len = %d, want 1", len(list))
+	}
+
+	// UpdateRule → Update
+	updated, err := svc.UpdateRule(context.Background(), "user-1", "proj-1", r.ID, map[string]any{"priority": 42})
+	if err != nil {
+		t.Fatalf("UpdateRule: %v", err)
+	}
+	if updated.Priority != 42 {
+		t.Errorf("UpdateRule Priority = %d", updated.Priority)
+	}
+
+	// RecordHit → IncrementHitCount
+	if err := svc.RecordHit(context.Background(), r.ID); err != nil {
+		t.Fatalf("RecordHit: %v", err)
+	}
+
+	// ListHits → GetHitCount
+	count, err := svc.ListHits(context.Background(), r.ID)
+	if err != nil {
+		t.Fatalf("ListHits: %v", err)
+	}
+	if count != 1 {
+		t.Errorf("ListHits = %d, want 1", count)
+	}
+
+	// DeleteRule → Delete
+	if err := svc.DeleteRule(context.Background(), "user-1", "proj-1", r.ID); err != nil {
+		t.Fatalf("DeleteRule: %v", err)
+	}
+}
+
+func TestMockRuleService_Delete_RoleForError(t *testing.T) {
+	store := newFakeMockRuleStore()
+	roles := newFakeRoleChecker()
+	roles.err = errs.ErrNotFound
+	svc := NewMockRuleService(store, roles)
+
+	err := svc.Delete(context.Background(), "user-1", "proj-1", "rule-1")
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !errors.Is(err, errs.ErrNotFound) {
+		t.Errorf("err = %v, want ErrNotFound", err)
+	}
+}
+
+func TestMockRuleService_Create_WithEmptyMatchJSON(t *testing.T) {
+	store := newFakeMockRuleStore()
+	roles := newFakeRoleChecker()
+	roles.roleByUser["proj-1:user-1"] = model.ProjectRoleAdmin
+	svc := NewMockRuleService(store, roles)
+
+	rule, err := svc.Create(context.Background(), "user-1", "proj-1", "api-1", CreateRuleSpec{
+		Name: "test-rule", MatchJSON: json.RawMessage("{}"), ResponseStatus: 200, Priority: 100,
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if rule == nil {
+		t.Fatal("rule should not be nil")
+	}
+}
+
+func TestMockRuleService_Create_RoleForError(t *testing.T) {
+	store := newFakeMockRuleStore()
+	roles := newFakeRoleChecker()
+	roles.err = errs.ErrForbidden
+	svc := NewMockRuleService(store, roles)
+
+	_, err := svc.Create(context.Background(), "user-1", "proj-1", "api-1", CreateRuleSpec{
+		Name: "test", ResponseStatus: 200, Priority: 100, MatchJSON: json.RawMessage(`{}`),
+	})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !errors.Is(err, errs.ErrForbidden) {
+		t.Errorf("err = %v, want ErrForbidden", err)
+	}
+}
+
+func TestMockRuleService_Update_RoleForError(t *testing.T) {
+	store := newFakeMockRuleStore()
+	roles := newFakeRoleChecker()
+	roles.err = errs.ErrNotFound
+	svc := NewMockRuleService(store, roles)
+
+	_, err := svc.Update(context.Background(), "user-1", "proj-1", "rule-1", map[string]any{"name": "x"})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !errors.Is(err, errs.ErrNotFound) {
+		t.Errorf("err = %v, want ErrNotFound", err)
+	}
+}

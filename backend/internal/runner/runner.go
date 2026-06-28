@@ -22,8 +22,13 @@ type RunUpdater interface {
 	Update(ctx context.Context, id string, fields map[string]any) error
 }
 
+// PostExecuteHook is called after each test case result is persisted.
+// Use it for side effects like AI attribution, notifications, etc.
+type PostExecuteHook func(ctx context.Context, run *model.TestRun, result *model.TestResult)
+
 // Run orchestrates a test run. Publishes SSE events via the optional publisher.
-func Run(ctx context.Context, run *model.TestRun, cases []*model.TestCase, baseURL string, persister ResultPersister, updater RunUpdater, pub EventPublisher) error {
+// If hook is non-nil, it is called after each result is persisted.
+func Run(ctx context.Context, run *model.TestRun, cases []*model.TestCase, baseURL string, persister ResultPersister, updater RunUpdater, pub EventPublisher, hook PostExecuteHook) error {
 	if run == nil {
 		return fmt.Errorf("run is nil")
 	}
@@ -54,9 +59,9 @@ func Run(ctx context.Context, run *model.TestRun, cases []*model.TestCase, baseU
 	}
 
 	if run.Mode == "parallel" && run.Concurrency > 1 {
-		runParallel(ctx, run, cases, baseURL, persister, pub, updater, aggregate)
+		runParallel(ctx, run, cases, baseURL, persister, pub, updater, aggregate, hook)
 	} else {
-		runSequential(ctx, run, cases, baseURL, persister, pub, updater, aggregate)
+		runSequential(ctx, run, cases, baseURL, persister, pub, updater, aggregate, hook)
 	}
 
 	// Guard: don't overwrite a cancelled run's status.
@@ -95,7 +100,7 @@ func Run(ctx context.Context, run *model.TestRun, cases []*model.TestCase, baseU
 	return nil
 }
 
-func runSequential(ctx context.Context, run *model.TestRun, cases []*model.TestCase, baseURL string, persister ResultPersister, pub EventPublisher, updater RunUpdater, aggregate func(string)) {
+func runSequential(ctx context.Context, run *model.TestRun, cases []*model.TestCase, baseURL string, persister ResultPersister, pub EventPublisher, updater RunUpdater, aggregate func(string), hook PostExecuteHook) {
 	for _, tc := range cases {
 		select {
 		case <-ctx.Done():
@@ -110,11 +115,11 @@ func runSequential(ctx context.Context, run *model.TestRun, cases []*model.TestC
 			return
 		default:
 		}
-		execOne(ctx, run, tc, baseURL, persister, pub, aggregate)
+		execOne(ctx, run, tc, baseURL, persister, pub, aggregate, hook)
 	}
 }
 
-func runParallel(ctx context.Context, run *model.TestRun, cases []*model.TestCase, baseURL string, persister ResultPersister, pub EventPublisher, updater RunUpdater, aggregate func(string)) {
+func runParallel(ctx context.Context, run *model.TestRun, cases []*model.TestCase, baseURL string, persister ResultPersister, pub EventPublisher, updater RunUpdater, aggregate func(string), hook PostExecuteHook) {
 	sem := make(chan struct{}, run.Concurrency)
 	var wg sync.WaitGroup
 
@@ -135,7 +140,7 @@ func runParallel(ctx context.Context, run *model.TestRun, cases []*model.TestCas
 		go func(tc *model.TestCase) {
 			defer wg.Done()
 			defer func() { <-sem }()
-			execOne(ctx, run, tc, baseURL, persister, pub, aggregate)
+			execOne(ctx, run, tc, baseURL, persister, pub, aggregate, hook)
 		}(tc)
 	}
 	wg.Wait()
@@ -153,10 +158,16 @@ func logPubErr(err error) {
 	}
 }
 
-func execOne(ctx context.Context, run *model.TestRun, tc *model.TestCase, baseURL string, persister ResultPersister, pub EventPublisher, aggregate func(string)) {
+func execOne(ctx context.Context, run *model.TestRun, tc *model.TestCase, baseURL string, persister ResultPersister, pub EventPublisher, aggregate func(string), hook PostExecuteHook) {
 	result := Execute(ctx, tc, baseURL)
 	result.RunID = run.ID
 	result.ID = id.New()
+
+	// Hook runs before persistence so it can enrich the result
+	// (e.g., AI attribution stored in result.AIAttributionJSON).
+	if hook != nil {
+		hook(ctx, run, result)
+	}
 
 	if err := persister.Create(ctx, result); err != nil {
 		result.Status = "error"
@@ -172,4 +183,5 @@ func execOne(ctx context.Context, run *model.TestRun, tc *model.TestCase, baseUR
 			Status: "running", Timestamp: time.Now().Unix(),
 		}))
 	}
+
 }

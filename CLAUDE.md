@@ -83,6 +83,16 @@ Example prompt template: `docs/ai-workflow/prompts/code-gen.md`.
 - WebSocket / gRPC support (out of v1).
 - Multi-tenant isolation (single-org per deployment until v1.1).
 
+## Phase checkpoint gate
+
+After completing a phase or milestone, the agent MUST:
+
+1. Re-read the plan file for that phase
+2. List every DoD / task item with status: done / skipped / not-started
+3. For skipped items, explicitly state the reason
+4. **Stop and ask the user** whether to proceed or fill gaps — do NOT continue automatically
+5. Before declaring a phase complete, run `go test ./internal/...` and `go vet ./internal/...` — report actual output, not cached assumptions
+
 ## When stuck
 
 1. Read the relevant ADR first. Most decisions are pre-made.

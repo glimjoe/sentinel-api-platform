@@ -233,3 +233,62 @@ func TestAuthService_Me_NotFound(t *testing.T) {
 	require.Error(t, err)
 	assert.ErrorIs(t, err, errs.ErrUserNotFound)
 }
+func TestAuthService_Register_LongPassword(t *testing.T) {
+	svc := newTestService(newFakeUserStore())
+	// Password > 72 chars exceeds bcrypt limit, should get ErrBadRequest.
+	longPW := "a" + strings.Repeat("b", 72) // 73 chars
+	_, _, _, err := svc.Register(context.Background(), "alice@example.com", longPW, "")
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, errs.ErrBadRequest),
+		"expected ErrBadRequest for password > 72 chars, got %v", err)
+}
+
+func TestAuthService_Me_Inactive(t *testing.T) {
+	users := newFakeUserStore()
+	svc := newTestService(users)
+	u, _, _, err := svc.Register(context.Background(), "alice@example.com", "hunter2hunter", "")
+	require.NoError(t, err)
+	users.byID[u.ID].IsActive = false
+
+	_, err = svc.Me(context.Background(), u.ID)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, errs.ErrUserInactive)
+}
+
+func TestAuthService_Refresh_Success(t *testing.T) {
+	users := newFakeUserStore()
+	svc := newTestService(users)
+	u, _, rt, err := svc.Register(context.Background(), "alice@example.com", "hunter2hunter", "")
+	require.NoError(t, err)
+
+	gotUser, accessToken, newRT, err := svc.Refresh(context.Background(), rt)
+	require.NoError(t, err)
+	require.NotNil(t, gotUser)
+	assert.Equal(t, u.ID, gotUser.ID)
+	assert.NotEmpty(t, accessToken)
+	assert.NotEmpty(t, newRT)
+	assert.NotEqual(t, rt, newRT, "refresh token should be rotated")
+}
+
+func TestAuthService_Refresh_InvalidToken(t *testing.T) {
+	svc := newTestService(newFakeUserStore())
+	_, _, _, err := svc.Refresh(context.Background(), "bogus-token")
+	require.Error(t, err)
+	assert.ErrorIs(t, err, errs.ErrInvalidCredentials)
+}
+
+func TestAuthService_Logout(t *testing.T) {
+	users := newFakeUserStore()
+	rtStore := newFakeRefreshTokenStore()
+	svc := NewAuthService(users, rtStore, "test-secret-must-be-long-enough-for-hs256", 15*time.Minute, 4)
+	u, _, _, err := svc.Register(context.Background(), "alice@example.com", "hunter2hunter", "")
+	require.NoError(t, err)
+
+	err = svc.Logout(context.Background(), u.ID)
+	require.NoError(t, err)
+
+	// Verify token is revoked — Refresh should fail now.
+	_, _, _, err = svc.Refresh(context.Background(), "")
+	require.Error(t, err)
+	assert.ErrorIs(t, err, errs.ErrInvalidCredentials)
+}

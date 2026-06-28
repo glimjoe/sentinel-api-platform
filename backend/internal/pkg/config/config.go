@@ -78,6 +78,7 @@ type AIConfig struct {
 	DailyLimitUSD    float64
 	MonthlyLimitUSD  float64
 	MaxTokens        int
+	Temperature      float64
 	TimeoutSeconds   int
 	CacheTTLSeconds  int
 }
@@ -162,6 +163,7 @@ func Load() (*Config, error) {
 			DailyLimitUSD:    v.GetFloat64("AI_DAILY_LIMIT_USD"),
 			MonthlyLimitUSD:  v.GetFloat64("AI_MONTHLY_LIMIT_USD"),
 			MaxTokens:        v.GetInt("AI_MAX_TOKENS"),
+			Temperature:      v.GetFloat64("AI_TEMPERATURE"),
 			TimeoutSeconds:   v.GetInt("AI_TIMEOUT_SECONDS"),
 			CacheTTLSeconds:  v.GetInt("AI_CACHE_TTL_SECONDS"),
 		},

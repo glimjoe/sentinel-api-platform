@@ -3,6 +3,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -17,6 +18,7 @@ import (
 	"gorm.io/driver/mysql"
 	"gorm.io/gorm"
 
+	"github.com/glimjoe/sentinel-api-platform/internal/ai"
 	"github.com/glimjoe/sentinel-api-platform/internal/api"
 	"github.com/glimjoe/sentinel-api-platform/internal/middleware"
 	"github.com/glimjoe/sentinel-api-platform/internal/mock"
@@ -234,6 +236,60 @@ func run() error {
 		middleware.RequireProjectRole(projectSvc,
 			model.ProjectRoleAdmin, model.ProjectRoleEngineer, model.ProjectRoleViewer),
 		testRunH.Stream)
+
+	// AI module wiring (Phase 4).
+	aiRepo := repository.NewAiRepo(db)
+	aiProvider := ai.NewProvider(cfg.AI.Provider, cfg.AI.AnthropicKey, cfg.AI.OpenAIKey)
+	aiCache := ai.NewCache(rdb, time.Duration(cfg.AI.CacheTTLSeconds)*time.Second)
+	aiGuard := ai.NewGuard(aiRepo, cfg.AI.DailyLimitUSD, cfg.AI.MonthlyLimitUSD)
+	temp := cfg.AI.Temperature
+if temp == 0 { temp = 0.3 }
+aiEngine := ai.NewEngine(aiProvider, aiCache, aiGuard, cfg.AI.MaxTokens, temp)
+	aiSvc := service.NewAIService(projectSvc, ai.NewAttributor(aiEngine), ai.NewCompleter(aiEngine), ai.NewPrioritizer(aiEngine), apiRepo, testCaseRepo, aiGuard)
+
+	// Attribution hook: runs AI attribution on failed/errored test results
+	// after each test case executes, before the result is persisted.
+	attributionHook := func(ctx context.Context, run *model.TestRun, result *model.TestResult) {
+		if result.Status != "fail" && result.Status != "error" {
+			return
+		}
+		resultJSON, err := json.Marshal(result)
+		if err != nil {
+			log.Error("attribution hook: marshal result", zap.Error(err))
+			return
+		}
+		callerID := "system"
+		if run.TriggeredBy != nil {
+			callerID = *run.TriggeredBy
+		}
+		attribution, err := aiSvc.Attribute(ctx, callerID, run.ProjectID, string(resultJSON))
+		if err != nil {
+			log.Warn("attribution hook: attribute", zap.Error(err))
+			return
+		}
+		attrJSON, err := json.Marshal(attribution)
+		if err != nil {
+			log.Error("attribution hook: marshal attribution", zap.Error(err))
+			return
+		}
+		result.AIAttributionJSON = attrJSON
+	}
+	testRunSvc.SetPostExecuteHook(attributionHook)
+
+	aiH := api.NewAIHandler(aiSvc)
+
+	if cfg.AI.Enabled {
+		protected.POST("/projects/:pid/ai/attribution", middleware.RequireProjectRole(projectSvc,
+			model.ProjectRoleAdmin, model.ProjectRoleEngineer),
+			aiH.Attribute)
+		protected.POST("/projects/:pid/ai/complete", middleware.RequireProjectRole(projectSvc,
+			model.ProjectRoleAdmin, model.ProjectRoleEngineer),
+			aiH.Complete)
+		protected.POST("/projects/:pid/ai/prioritize", middleware.RequireProjectRole(projectSvc,
+			model.ProjectRoleAdmin, model.ProjectRoleEngineer),
+			aiH.Prioritize)
+	}
+	protected.GET("/ai/budget", aiH.Budget)
 
 	// Mock engine wiring (Phase 2 M1). The public /mock/:projectSlug/*path
 	// route is registered OUTSIDE the protected group — anyone with the

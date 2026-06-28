@@ -102,6 +102,11 @@
           </el-table-column>
         </el-table>
       </el-tab-pane>
+
+      <!-- AI -->
+      <el-tab-pane label="AI" name="ai">
+        <AiPanel :apis="apis" @case-created="onAiCaseCreated" />
+      </el-tab-pane>
     </el-tabs>
 
     <!-- Create API Dialog -->
@@ -206,6 +211,8 @@ import type { API } from '@/types/api'
 import type { MockRule } from '@/types/mock_rule'
 import type { TestCase } from '@/types/test_case'
 import type { TestRun, RunEvent } from '@/types/test_run'
+import AiPanel from '@/components/AiPanel.vue'
+import type { GeneratedCase } from '@/types/ai'
 import { ElMessage } from 'element-plus'
 
 const route = useRoute()
@@ -299,6 +306,10 @@ async function viewResults(row: TestRun) {
   showResults.value = true
 }
 
+function onAiCaseCreated(c: GeneratedCase) {
+  caseForm.value = { name: c.name, method: c.method, path: c.path, expected_status: c.expected_status }
+  showCreateCase.value = true
+}
 function methodColor(m: string) { const map: Record<string, string> = { GET: 'success', POST: 'primary', PUT: 'warning', PATCH: 'warning', DELETE: 'danger' }; return map[m] || 'info' }
 function runStatusColor(s: string) { const map: Record<string, string> = { queued: 'info', running: 'warning', success: 'success', failed: 'danger', cancelled: 'info' }; return map[s] || 'info' }
 function runPercent(r: { total: number; passed: number }) { return r.total ? Math.round((r.passed / r.total) * 100) : 0 }

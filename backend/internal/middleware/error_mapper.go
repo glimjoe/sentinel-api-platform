@@ -22,6 +22,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"github.com/glimjoe/sentinel-api-platform/internal/ai"
 	"github.com/glimjoe/sentinel-api-platform/internal/pkg/errs"
 	"github.com/glimjoe/sentinel-api-platform/internal/pkg/httpx"
 )
@@ -44,6 +45,10 @@ func WriteError(c *gin.Context, err error) {
 		httpx.Fail(c, http.StatusNotFound, 40400, err.Error())
 	case errors.Is(err, errs.ErrConflict), errors.Is(err, errs.ErrEmailTaken):
 		httpx.Fail(c, http.StatusConflict, 40900, err.Error())
+	case errors.Is(err, ai.ErrAIDisabled):
+		httpx.Fail(c, http.StatusServiceUnavailable, 50300, err.Error())
+	case errors.Is(err, ai.ErrDailyBudgetExceeded), errors.Is(err, ai.ErrMonthlyBudgetExceeded):
+		httpx.Fail(c, http.StatusTooManyRequests, 42900, err.Error())
 	default:
 		// Generic message — don't leak the wrap chain. The full error
 		// is in the access log with the request_id so operators can
