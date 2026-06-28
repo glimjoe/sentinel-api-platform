@@ -94,7 +94,14 @@ func assertAdvanced(raw []byte, status int, headers map[string][]string, body []
 		case "header":
 			name, _ := rule["name"].(string)
 			expect, _ := rule["expect"].(string)
-			vals := headers[strings.ToLower(name)]
+			// Case-insensitive header lookup (HTTP headers are case-insensitive).
+			var vals []string
+			for k, v := range headers {
+				if strings.EqualFold(k, name) {
+					vals = v
+					break
+				}
+			}
 			found := false
 			for _, v := range vals {
 				if v == expect {

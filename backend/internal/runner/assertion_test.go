@@ -109,3 +109,95 @@ func TestAssert_JSONSchemaMismatch(t *testing.T) {
 		t.Error("expected schema failure")
 	}
 }
+
+func TestAssert_AdvancedHeader(t *testing.T) {
+	assertions := json.RawMessage(`[{"type":"header","name":"x-request-id","expect":"abc123"}]`)
+	tc := &model.TestCase{AssertionsJSON: assertions}
+	headers := map[string][]string{"X-Request-Id": {"abc123"}}
+	f := Assert(tc, 200, headers, nil)
+	if len(f) != 0 {
+		t.Errorf("expected 0 failures, got %v", f)
+	}
+}
+
+func TestAssert_AdvancedHeaderMismatch(t *testing.T) {
+	assertions := json.RawMessage(`[{"type":"header","name":"x-request-id","expect":"abc123"}]`)
+	tc := &model.TestCase{AssertionsJSON: assertions}
+	headers := map[string][]string{"X-Request-Id": {"xyz789"}}
+	f := Assert(tc, 200, headers, nil)
+	if len(f) == 0 {
+		t.Error("expected header failure")
+	}
+}
+
+func TestAssert_AdvancedInvalidJSON(t *testing.T) {
+	assertions := json.RawMessage(`not-json`)
+	tc := &model.TestCase{AssertionsJSON: assertions}
+	f := Assert(tc, 200, nil, nil)
+	if len(f) == 0 || f[0].Type != "assertions.parse" {
+		t.Errorf("expected assertions.parse failure, got %v", f)
+	}
+}
+
+func TestAssert_BodyUnknownType(t *testing.T) {
+	tc := &model.TestCase{ExpectedBodyMatch: "unknown_mode", ExpectedBodyJSON: []byte(`x`)}
+	f := Assert(tc, 200, nil, []byte(`x`))
+	if len(f) == 0 || f[0].Type != "body.unknown" {
+		t.Errorf("expected body.unknown failure, got %v", f)
+	}
+}
+
+func TestAssert_JSONPathArrayIndex(t *testing.T) {
+	spec := json.RawMessage(`{"path":"$.items[1].name","expect":"bar"}`)
+	tc := &model.TestCase{ExpectedBodyMatch: "jsonpath", ExpectedBodyJSON: spec}
+	f := Assert(tc, 200, nil, []byte(`{"items":[{"name":"foo"},{"name":"bar"}]}`))
+	if len(f) != 0 {
+		t.Errorf("expected 0 failures, got %v", f)
+	}
+}
+
+func TestAssert_JSONPathArrayIndexOutOfRange(t *testing.T) {
+	spec := json.RawMessage(`{"path":"$.items[99].name","expect":"bar"}`)
+	tc := &model.TestCase{ExpectedBodyMatch: "jsonpath", ExpectedBodyJSON: spec}
+	f := Assert(tc, 200, nil, []byte(`{"items":[{"name":"foo"}]}`))
+	if len(f) == 0 {
+		t.Error("expected jsonpath failure for out-of-range index")
+	}
+}
+
+func TestAssert_InvalidRegex(t *testing.T) {
+	tc := &model.TestCase{ExpectedBodyMatch: "regex", ExpectedBodyPattern: `[invalid`}
+	f := Assert(tc, 200, nil, []byte(`test`))
+	if len(f) == 0 || f[0].Type != "body.regex" {
+		t.Errorf("expected body.regex failure, got %v", f)
+	}
+}
+
+func TestAssert_RegexFallbackToBodyJSON(t *testing.T) {
+	tc := &model.TestCase{ExpectedBodyMatch: "regex", ExpectedBodyJSON: []byte(`^\d+$`)}
+	f := Assert(tc, 200, nil, []byte(`42`))
+	if len(f) != 0 {
+		t.Errorf("expected 0 failures (regex from body_json), got %v", f)
+	}
+}
+
+func TestJSONPathLookup_NavigateNonObject(t *testing.T) {
+	_, err := jsonPathLookup([]byte(`"not an object"`), "$.somekey")
+	if err == nil {
+		t.Error("expected error navigating into non-object")
+	}
+}
+
+func TestJSONPathLookup_KeyNotFound(t *testing.T) {
+	_, err := jsonPathLookup([]byte(`{"a":1}`), "$.b")
+	if err == nil {
+		t.Error("expected error for missing key")
+	}
+}
+
+func TestJSONPathLookup_NotArray(t *testing.T) {
+	_, err := jsonPathLookup([]byte(`{"a":"not_array"}`), "$.a[0]")
+	if err == nil {
+		t.Error("expected error for indexing non-array")
+	}
+}
