@@ -73,3 +73,39 @@ func TestAssert_Advanced_Status(t *testing.T) {
 		t.Error("expected status failure from advanced assertions")
 	}
 }
+
+func TestAssert_JSONPath(t *testing.T) {
+	spec := json.RawMessage(`{"path":"$.name","expect":"pets"}`)
+	tc := &model.TestCase{ExpectedBodyMatch: "jsonpath", ExpectedBodyJSON: spec}
+	f := Assert(tc, 200, nil, []byte(`{"name":"pets","count":5}`))
+	if len(f) != 0 {
+		t.Errorf("expected 0 failures, got %v", f)
+	}
+}
+
+func TestAssert_JSONPathMismatch(t *testing.T) {
+	spec := json.RawMessage(`{"path":"$.name","expect":"dogs"}`)
+	tc := &model.TestCase{ExpectedBodyMatch: "jsonpath", ExpectedBodyJSON: spec}
+	f := Assert(tc, 200, nil, []byte(`{"name":"pets"}`))
+	if len(f) == 0 {
+		t.Error("expected jsonpath mismatch")
+	}
+}
+
+func TestAssert_JSONSchema(t *testing.T) {
+	schema := json.RawMessage(`{"type":"object","properties":{"ok":{"type":"boolean"}},"required":["ok"]}`)
+	tc := &model.TestCase{ExpectedBodyMatch: "schema", ExpectedBodyJSON: schema}
+	f := Assert(tc, 200, nil, []byte(`{"ok":true}`))
+	if len(f) != 0 {
+		t.Errorf("expected 0 failures, got %v", f)
+	}
+}
+
+func TestAssert_JSONSchemaMismatch(t *testing.T) {
+	schema := json.RawMessage(`{"type":"object","properties":{"ok":{"type":"boolean"}},"required":["ok"]}`)
+	tc := &model.TestCase{ExpectedBodyMatch: "schema", ExpectedBodyJSON: schema}
+	f := Assert(tc, 200, nil, []byte(`{"not_ok":1}`))
+	if len(f) == 0 {
+		t.Error("expected schema failure")
+	}
+}
