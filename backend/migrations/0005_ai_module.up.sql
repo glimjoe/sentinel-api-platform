@@ -4,7 +4,7 @@
 CREATE TABLE IF NOT EXISTS ai_usage (
   id                CHAR(26) NOT NULL,
   model             VARCHAR(64) NOT NULL,
-  function          ENUM('attribution','completion','prioritization') NOT NULL,
+  `function`        ENUM('attribution','completion','prioritization') NOT NULL,
   prompt_tokens     INT NOT NULL DEFAULT 0,
   completion_tokens INT NOT NULL DEFAULT 0,
   cost_usd          DECIMAL(12,8) NOT NULL DEFAULT 0,
@@ -12,6 +12,6 @@ CREATE TABLE IF NOT EXISTS ai_usage (
   created_at        DATETIME(3) NOT NULL,
   PRIMARY KEY (id),
   KEY idx_ai_usage_created (created_at),
-  KEY idx_ai_usage_function (function),
+  KEY idx_ai_usage_function (`function`),
   KEY idx_ai_usage_project (project_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
