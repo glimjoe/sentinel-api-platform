@@ -40,7 +40,11 @@ func NewAIService(roles projectRoleChecker, attributor *ai.Attributor, completer
 
 // Attribute runs failure attribution on a test result (passed as JSON).
 func (s *AIService) Attribute(ctx context.Context, callerID, projectID, resultJSON string) (*ai.AttributionResult, error) {
-	if _, err := s.roles.RoleFor(ctx, projectID, callerID); err != nil {
+	role, err := s.roles.RoleFor(ctx, projectID, callerID)
+	if err != nil {
+		return nil, errs.ErrForbidden
+	}
+	if role != model.ProjectRoleAdmin && role != model.ProjectRoleEngineer {
 		return nil, errs.ErrForbidden
 	}
 	return s.attributor.Attribute(ctx, resultJSON)
@@ -48,7 +52,11 @@ func (s *AIService) Attribute(ctx context.Context, callerID, projectID, resultJS
 
 // Complete generates test cases from API specs in the project.
 func (s *AIService) Complete(ctx context.Context, callerID, projectID string, apiID *string) ([]ai.GeneratedCase, error) {
-	if _, err := s.roles.RoleFor(ctx, projectID, callerID); err != nil {
+	role, err := s.roles.RoleFor(ctx, projectID, callerID)
+	if err != nil {
+		return nil, errs.ErrForbidden
+	}
+	if role != model.ProjectRoleAdmin && role != model.ProjectRoleEngineer {
 		return nil, errs.ErrForbidden
 	}
 	apis, err := s.apiStore.ListByProject(ctx, projectID)
@@ -82,7 +90,11 @@ func (s *AIService) Complete(ctx context.Context, callerID, projectID string, ap
 
 // Prioritize suggests priorities for test cases.
 func (s *AIService) Prioritize(ctx context.Context, callerID, projectID string, caseIDs []string) ([]ai.PriorityItem, error) {
-	if _, err := s.roles.RoleFor(ctx, projectID, callerID); err != nil {
+	role, err := s.roles.RoleFor(ctx, projectID, callerID)
+	if err != nil {
+		return nil, errs.ErrForbidden
+	}
+	if role != model.ProjectRoleAdmin && role != model.ProjectRoleEngineer {
 		return nil, errs.ErrForbidden
 	}
 	cases, err := s.caseStore.ListByProject(ctx, projectID)

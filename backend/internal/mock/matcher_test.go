@@ -240,3 +240,31 @@ func TestMatcher_EmptyMatchJSON_ActsAsCatchall(t *testing.T) {
 	assert.Equal(t, 1, scored.Score)
 	assert.Equal(t, "catchall", scored.Reason)
 }
+
+func TestMatcher_TypeMatches_AllTypes(t *testing.T) {
+	tests := []struct {
+		typ, val string
+		match    bool
+	}{
+		{"string", "hello", true},
+		{"string", "", false},
+		{"number", "42", true},
+		{"number", "abc", false},
+		{"boolean", "true", true},
+		{"boolean", "nope", false},
+		{"null", "", true},
+		{"null", "null", true},
+		{"null", "something", false},
+		{"array", `[1,2]`, true},
+		{"array", `not array`, false},
+		{"object", `{"a":1}`, true},
+		{"object", `not object`, false},
+		{"unknown", "x", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.typ+"="+tt.val, func(t *testing.T) {
+			got := typeMatches(tt.typ, tt.val)
+			assert.Equal(t, tt.match, got)
+		})
+	}
+}
