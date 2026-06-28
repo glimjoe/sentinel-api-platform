@@ -24,11 +24,17 @@ type TestRunService struct {
 	resultStore runner.ResultPersister
 	roles       projectRoleChecker
 	publisher   runner.EventPublisher
+	hook        runner.PostExecuteHook
 	cancellers  sync.Map // runID → context.CancelFunc
 }
 
 func NewTestRunService(store testRunStore, caseStore testCaseStore, resultStore runner.ResultPersister, roles projectRoleChecker, pub runner.EventPublisher) *TestRunService {
 	return &TestRunService{store: store, caseStore: caseStore, resultStore: resultStore, roles: roles, publisher: pub}
+}
+
+// SetPostExecuteHook sets the hook called after each test result is persisted.
+func (s *TestRunService) SetPostExecuteHook(hook runner.PostExecuteHook) {
+	s.hook = hook
 }
 
 func (s *TestRunService) Create(ctx context.Context, callerID, projectID, name, targetBaseURL, mode string) (*model.TestRun, error) {
@@ -84,7 +90,7 @@ func (s *TestRunService) Start(ctx context.Context, callerID, runID string) (*mo
 			s.cancellers.Delete(runID)
 			cancel()
 		}()
-		_ = runner.Run(runCtx, run, cases, run.TargetBaseURL, s.resultStore, s.store, s.publisher)
+		_ = runner.Run(runCtx, run, cases, run.TargetBaseURL, s.resultStore, s.store, s.publisher, s.hook)
 	}()
 
 	return s.store.FindByID(ctx, runID)

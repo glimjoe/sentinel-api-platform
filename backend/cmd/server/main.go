@@ -3,6 +3,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -245,6 +246,36 @@ func run() error {
 if temp == 0 { temp = 0.3 }
 aiEngine := ai.NewEngine(aiProvider, aiCache, aiGuard, cfg.AI.MaxTokens, temp)
 	aiSvc := service.NewAIService(projectSvc, ai.NewAttributor(aiEngine), ai.NewCompleter(aiEngine), ai.NewPrioritizer(aiEngine), apiRepo, testCaseRepo, aiGuard)
+
+	// Attribution hook: runs AI attribution on failed/errored test results
+	// after each test case executes, before the result is persisted.
+	attributionHook := func(ctx context.Context, run *model.TestRun, result *model.TestResult) {
+		if result.Status != "fail" && result.Status != "error" {
+			return
+		}
+		resultJSON, err := json.Marshal(result)
+		if err != nil {
+			log.Error("attribution hook: marshal result", zap.Error(err))
+			return
+		}
+		callerID := "system"
+		if run.TriggeredBy != nil {
+			callerID = *run.TriggeredBy
+		}
+		attribution, err := aiSvc.Attribute(ctx, callerID, run.ProjectID, string(resultJSON))
+		if err != nil {
+			log.Warn("attribution hook: attribute", zap.Error(err))
+			return
+		}
+		attrJSON, err := json.Marshal(attribution)
+		if err != nil {
+			log.Error("attribution hook: marshal attribution", zap.Error(err))
+			return
+		}
+		result.AIAttributionJSON = attrJSON
+	}
+	testRunSvc.SetPostExecuteHook(attributionHook)
+
 	aiH := api.NewAIHandler(aiSvc)
 
 	if cfg.AI.Enabled {
