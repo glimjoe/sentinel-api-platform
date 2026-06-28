@@ -49,6 +49,21 @@ func Run(ctx context.Context, run *model.TestRun, cases []*model.TestCase, baseU
 
 	// Sequential execution (parallel deferred to later Phase 3 iteration)
 	for _, tc := range cases {
+		select {
+		case <-ctx.Done():
+			run.Status = "cancelled"
+			updater.Update(ctx, run.ID, map[string]any{"status": "cancelled", "finished_at": time.Now()})
+			if pub != nil {
+				pub.Publish(ctx, &RunEvent{
+					Type: "complete", RunID: run.ID,
+					Total: run.Total, Passed: run.Passed, Failed: run.Failed,
+					Errored: run.Errored, Skipped: run.Skipped,
+					Status: "cancelled", Timestamp: time.Now().Unix(),
+				})
+			}
+			return ctx.Err()
+		default:
+		}
 		result := Execute(ctx, tc, baseURL)
 		result.RunID = run.ID
 		result.ID = id.New()

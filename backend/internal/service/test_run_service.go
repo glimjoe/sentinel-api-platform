@@ -73,14 +73,20 @@ func (s *TestRunService) Start(ctx context.Context, callerID, runID string) (*mo
 
 	runCtx, cancel := context.WithCancel(ctx)
 	s.cancellers.Store(runID, cancel)
-	defer func() {
-		s.cancellers.Delete(runID)
-		cancel()
+
+	// Mark running immediately so the client sees the transition.
+	_ = s.store.Update(ctx, runID, map[string]any{"status": "running"})
+
+	// Run asynchronously so the HTTP request returns immediately.
+	// The caller watches progress via SSE or polls GET /runs/:runId.
+	go func() {
+		defer func() {
+			s.cancellers.Delete(runID)
+			cancel()
+		}()
+		_ = runner.Run(runCtx, run, cases, run.TargetBaseURL, s.resultStore, s.store, s.publisher)
 	}()
 
-	if err := runner.Run(runCtx, run, cases, run.TargetBaseURL, s.resultStore, s.store, s.publisher); err != nil {
-		return nil, err
-	}
 	return s.store.FindByID(ctx, runID)
 }
 

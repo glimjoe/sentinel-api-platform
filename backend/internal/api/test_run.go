@@ -75,7 +75,6 @@ func (h *TestRunHandler) Get(c *gin.Context) {
 	httpx.OK(c, run)
 }
 
-// Stream handles GET /api/v1/projects/:pid/runs/:runId/stream — SSE.
 func (h *TestRunHandler) Cancel(c *gin.Context) {
 	callerID := c.GetString("user_id")
 	if err := h.svc.Cancel(c.Request.Context(), callerID, c.Param("runId")); err != nil {
@@ -85,6 +84,7 @@ func (h *TestRunHandler) Cancel(c *gin.Context) {
 	httpx.OK(c, nil)
 }
 
+// Stream handles GET /api/v1/projects/:pid/runs/:runId/stream — SSE.
 func (h *TestRunHandler) Stream(c *gin.Context) {
 	runID := c.Param("runId")
 	if h.broker == nil {

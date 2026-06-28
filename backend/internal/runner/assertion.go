@@ -66,7 +66,11 @@ func assertBody(tc *model.TestCase, body []byte) []AssertionFailure {
 			return []AssertionFailure{{Type: "body.regex", Message: "body does not match pattern"}}
 		}
 	case "jsonpath":
-		// JSONPath support deferred to Phase 3 deep-dive; treat as pass for now.
+		return []AssertionFailure{{Type: "body.jsonpath", Message: "jsonpath match not yet implemented"}}
+	case "schema":
+		return []AssertionFailure{{Type: "body.schema", Message: "schema match not yet implemented"}}
+	default:
+		return []AssertionFailure{{Type: "body.unknown", Message: fmt.Sprintf("unknown match type: %s", tc.ExpectedBodyMatch)}}
 	}
 	return nil
 }
