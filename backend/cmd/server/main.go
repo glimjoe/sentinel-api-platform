@@ -94,6 +94,10 @@ func run() error {
 	r.Use(middleware.Recovery(log))
 	r.Use(middleware.CORS(cfg.App.FrontendOrigin))
 
+	// Audit logging (Phase 2 M2).
+	auditRepo := repository.NewAuditLogRepo(db)
+	r.Use(middleware.Audit(auditRepo))
+
 	healthH := &api.HealthHandler{DB: db, Redis: rdb}
 	r.GET("/api/v1/healthz", healthH.Healthz)
 	r.GET("/api/v1/readyz", healthH.Readyz)
