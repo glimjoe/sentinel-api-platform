@@ -8,6 +8,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"github.com/glimjoe/sentinel-api-platform/internal/middleware"
 	"github.com/glimjoe/sentinel-api-platform/internal/pkg/httpx"
 	"github.com/glimjoe/sentinel-api-platform/internal/runner"
 	"github.com/glimjoe/sentinel-api-platform/internal/service"
@@ -41,7 +42,7 @@ func (h *TestRunHandler) Create(c *gin.Context) {
 	pid := c.Param("pid")
 	run, err := h.svc.Create(c.Request.Context(), callerID, pid, req.Name, req.TargetBaseURL, req.Mode)
 	if err != nil {
-		httpx.Fail(c, http.StatusInternalServerError, 50000, err.Error())
+		middleware.WriteError(c, err)
 		return
 	}
 	httpx.OK(c, run)
@@ -51,7 +52,7 @@ func (h *TestRunHandler) Start(c *gin.Context) {
 	callerID := c.GetString("user_id")
 	run, err := h.svc.Start(c.Request.Context(), callerID, c.Param("runId"))
 	if err != nil {
-		httpx.Fail(c, http.StatusInternalServerError, 50000, err.Error())
+		middleware.WriteError(c, err)
 		return
 	}
 	httpx.OK(c, run)
@@ -60,7 +61,7 @@ func (h *TestRunHandler) Start(c *gin.Context) {
 func (h *TestRunHandler) List(c *gin.Context) {
 	list, err := h.svc.ListByProject(c.Request.Context(), c.Param("pid"))
 	if err != nil {
-		httpx.Fail(c, http.StatusInternalServerError, 50000, err.Error())
+		middleware.WriteError(c, err)
 		return
 	}
 	httpx.OK(c, list)
@@ -78,22 +79,23 @@ func (h *TestRunHandler) Get(c *gin.Context) {
 func (h *TestRunHandler) Cancel(c *gin.Context) {
 	callerID := c.GetString("user_id")
 	if err := h.svc.Cancel(c.Request.Context(), callerID, c.Param("runId")); err != nil {
-		httpx.Fail(c, http.StatusInternalServerError, 50000, err.Error())
+		middleware.WriteError(c, err)
 		return
 	}
 	httpx.OK(c, nil)
 }
 
-// Stream handles GET /api/v1/projects/:pid/runs/:runId/stream — SSE.
+// Export handles GET /api/v1/projects/:pid/runs/:runId/results.
 func (h *TestRunHandler) Export(c *gin.Context) {
 	results, err := h.svc.ExportResults(c.Request.Context(), c.Param("runId"))
 	if err != nil {
-		httpx.Fail(c, http.StatusInternalServerError, 50000, err.Error())
+		middleware.WriteError(c, err)
 		return
 	}
 	httpx.OK(c, results)
 }
 
+// Stream handles GET /api/v1/projects/:pid/runs/:runId/stream — SSE.
 func (h *TestRunHandler) Stream(c *gin.Context) {
 	runID := c.Param("runId")
 	if h.broker == nil {
@@ -111,7 +113,7 @@ func (h *TestRunHandler) Stream(c *gin.Context) {
 
 	ch, cleanup, err := h.broker.Subscribe(ctx, runID)
 	if err != nil {
-		httpx.Fail(c, http.StatusInternalServerError, 50000, err.Error())
+		middleware.WriteError(c, err)
 		return
 	}
 	defer cleanup()

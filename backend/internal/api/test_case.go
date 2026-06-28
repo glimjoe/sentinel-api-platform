@@ -5,6 +5,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"github.com/glimjoe/sentinel-api-platform/internal/middleware"
 	"github.com/glimjoe/sentinel-api-platform/internal/model"
 	"github.com/glimjoe/sentinel-api-platform/internal/pkg/httpx"
 	"github.com/glimjoe/sentinel-api-platform/internal/service"
@@ -26,7 +27,7 @@ func (h *TestCaseHandler) Create(c *gin.Context) {
 	pid := c.Param("pid")
 	result, err := h.svc.Create(c.Request.Context(), callerID, pid, &tc)
 	if err != nil {
-		httpx.Fail(c, http.StatusInternalServerError, 50000, err.Error())
+		middleware.WriteError(c, err)
 		return
 	}
 	httpx.OK(c, result)
@@ -35,7 +36,7 @@ func (h *TestCaseHandler) Create(c *gin.Context) {
 func (h *TestCaseHandler) List(c *gin.Context) {
 	list, err := h.svc.ListByProject(c.Request.Context(), c.Param("pid"))
 	if err != nil {
-		httpx.Fail(c, http.StatusInternalServerError, 50000, err.Error())
+		middleware.WriteError(c, err)
 		return
 	}
 	httpx.OK(c, list)
@@ -60,7 +61,7 @@ func (h *TestCaseHandler) Update(c *gin.Context) {
 	pid := c.Param("pid")
 	tc, err := h.svc.Update(c.Request.Context(), callerID, pid, c.Param("caseId"), fields)
 	if err != nil {
-		httpx.Fail(c, http.StatusInternalServerError, 50000, err.Error())
+		middleware.WriteError(c, err)
 		return
 	}
 	httpx.OK(c, tc)
@@ -70,7 +71,7 @@ func (h *TestCaseHandler) Delete(c *gin.Context) {
 	callerID := c.GetString("user_id")
 	pid := c.Param("pid")
 	if err := h.svc.Delete(c.Request.Context(), callerID, pid, c.Param("caseId")); err != nil {
-		httpx.Fail(c, http.StatusInternalServerError, 50000, err.Error())
+		middleware.WriteError(c, err)
 		return
 	}
 	httpx.OK(c, nil)

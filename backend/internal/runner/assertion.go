@@ -162,7 +162,9 @@ func jsonPathLookup(raw []byte, path string) (any, error) {
 				return nil, fmt.Errorf("invalid index syntax in %q", part)
 			}
 			n := 0
-			fmt.Sscanf(part[i+1:i+end], "%d", &n)
+			if _, err := fmt.Sscanf(part[i+1:i+end], "%d", &n); err != nil {
+				return nil, fmt.Errorf("invalid array index in %q", part)
+			}
 			idx = &n
 		}
 		m, ok := cur.(map[string]any)

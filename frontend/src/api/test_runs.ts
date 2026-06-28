@@ -18,12 +18,15 @@ export function cancelRun(pid: string, runId: string): Promise<void> {
 }
 
 export function streamRun(pid: string, runId: string, onEvent: (e: RunEvent) => void): () => void {
-  const url = `/api/v1/projects/${pid}/runs/${runId}/stream`
+  const token = localStorage.getItem('access_token') || ''
+  const url = `/api/v1/projects/${pid}/runs/${runId}/stream?token=${encodeURIComponent(token)}`
   const es = new EventSource(url)
   es.onmessage = (msg) => {
     try {
       onEvent(JSON.parse(msg.data))
-    } catch { /* ignore parse errors */ }
+    } catch {
+      /* ignore parse errors */
+    }
   }
   es.onerror = () => es.close()
   return () => es.close()

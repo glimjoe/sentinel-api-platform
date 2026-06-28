@@ -40,13 +40,19 @@ func Execute(ctx context.Context, tc *model.TestCase, baseURL string) *model.Tes
 	// Set headers
 	if tc.HeadersJSON != nil {
 		var headers map[string]string
-		if err := json.Unmarshal(tc.HeadersJSON, &headers); err == nil {
-			for k, v := range headers {
-				req.Header.Set(k, v)
-			}
+		if err := json.Unmarshal(tc.HeadersJSON, &headers); err != nil {
+			result.Status = "error"
+			result.ErrorMsg = fmt.Sprintf("invalid headers_json: %v", err)
+			result.DurationMs = int(time.Since(start).Milliseconds())
+			return result
+		}
+		for k, v := range headers {
+			req.Header.Set(k, v)
 		}
 	}
-	req.Header.Set("Content-Type", "application/json")
+	if req.Header.Get("Content-Type") == "" {
+		req.Header.Set("Content-Type", "application/json")
+	}
 
 	// Execute
 	client := &http.Client{Timeout: 30 * time.Second}
@@ -59,7 +65,13 @@ func Execute(ctx context.Context, tc *model.TestCase, baseURL string) *model.Tes
 	}
 	defer resp.Body.Close()
 
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20)) // 1 MB max
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20)) // 1 MB max
+	if err != nil {
+		result.Status = "error"
+		result.ErrorMsg = fmt.Sprintf("read body: %v", err)
+		result.DurationMs = int(time.Since(start).Milliseconds())
+		return result
+	}
 	result.ActualStatus = &resp.StatusCode
 	result.DurationMs = int(time.Since(start).Milliseconds())
 
@@ -81,8 +93,12 @@ func Execute(ctx context.Context, tc *model.TestCase, baseURL string) *model.Tes
 	failures := Assert(tc, resp.StatusCode, headerMap, body)
 	if len(failures) > 0 {
 		result.Status = "fail"
-		failJSON, _ := json.Marshal(failures)
-		result.AssertionFailuresJSON = failJSON
+		failJSON, err := json.Marshal(failures)
+		if err != nil {
+			result.AssertionFailuresJSON = []byte(fmt.Sprintf(`[{"type":"marshal","message":"%s"}]`, err.Error()))
+		} else {
+			result.AssertionFailuresJSON = failJSON
+		}
 	} else {
 		result.Status = "pass"
 	}
