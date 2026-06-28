@@ -57,5 +57,18 @@ export const useAuthStore = defineStore('auth', () => {
     clear()
   }
 
-  return { accessToken, refreshToken, user, isAuthenticated, login, register, logout }
+  async function refresh(): Promise<boolean> {
+    if (!refreshToken.value) return false
+    try {
+      const resp = await api.post<AuthResponse, AuthResponse>('/auth/refresh', { refresh_token: refreshToken.value })
+      setTokens(resp.access_token, resp.refresh_token)
+      user.value = resp.user
+      return true
+    } catch {
+      clear()
+      return false
+    }
+  }
+
+  return { accessToken, refreshToken, user, isAuthenticated, login, register, logout, refresh }
 })

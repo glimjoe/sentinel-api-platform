@@ -3,6 +3,7 @@
     <div class="header">
       <h2>{{ project?.name }}</h2>
       <el-tag>{{ project?.slug }}</el-tag>
+      <el-button size="small" @click="$router.push(`/projects/${pid}/console`)">Mock Console</el-button>
     </div>
 
     <el-tabs v-model="activeTab">
@@ -31,15 +32,21 @@
 
       <!-- Mock Rules -->
       <el-tab-pane label="Mock Rules" name="rules">
-        <el-select v-model="selectedApiId" placeholder="Choose API" @change="fetchRules" style="width:320px;margin-bottom:12px">
-          <el-option v-for="a in apis" :key="a.id" :label="`${a.method} ${a.path}`" :value="a.id" />
-        </el-select>
+        <div class="tab-header">
+          <el-select v-model="selectedApiId" placeholder="Choose API" @change="fetchRules" style="width:320px">
+            <el-option v-for="a in apis" :key="a.id" :label="`${a.method} ${a.path}`" :value="a.id" />
+          </el-select>
+          <el-button type="primary" size="small" :disabled="!selectedApiId" @click="openCreateRule">New Rule</el-button>
+        </div>
         <el-table v-if="rules.length" :data="rules" stripe size="small">
           <el-table-column prop="name" label="Name" min-width="140" />
           <el-table-column prop="response_status" label="Status" width="70" />
           <el-table-column prop="priority" label="Prio" width="60" />
-          <el-table-column label="Actions" width="80">
-            <template #default="{ row }"><el-button size="small" type="danger" @click="handleDeleteRule(row)">Del</el-button></template>
+          <el-table-column label="Actions" width="140">
+            <template #default="{ row }">
+              <el-button size="small" @click="openEditRule(row)">Edit</el-button>
+              <el-button size="small" type="danger" @click="handleDeleteRule(row)">Del</el-button>
+            </template>
           </el-table-column>
         </el-table>
         <el-empty v-else-if="selectedApiId" description="No rules" />
@@ -167,6 +174,22 @@
       </el-table>
       <template #footer><el-button @click="showResults = false">Close</el-button></template>
     </el-dialog>
+
+    <!-- Create / Edit Rule Dialog -->
+    <el-dialog v-model="showRuleDialog" :title="editingRuleId ? 'Edit Rule' : 'New Rule'" width="500px">
+      <el-form :model="ruleForm" label-width="110px">
+        <el-form-item label="Name"><el-input v-model="ruleForm.name" placeholder="e.g. Success response" /></el-form-item>
+        <el-form-item label="Match JSON"><el-input v-model="ruleForm.match_json" type="textarea" :rows="3" placeholder='{"path":"/pets","method":"GET"}' /></el-form-item>
+        <el-form-item label="Response Status"><el-input-number v-model="ruleForm.response_status" :min="100" :max="599" /></el-form-item>
+        <el-form-item label="Response Body"><el-input v-model="ruleForm.response_body_json" type="textarea" :rows="3" placeholder='{"id":1,"name":"dog"}' /></el-form-item>
+        <el-form-item label="Priority"><el-input-number v-model="ruleForm.priority" :min="0" :max="100" /></el-form-item>
+        <el-form-item label="Delay (ms)"><el-input-number v-model="ruleForm.delay_ms" :min="0" :max="30000" /></el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="showRuleDialog = false">Cancel</el-button>
+        <el-button type="primary" :loading="savingRule" @click="handleSaveRule">{{ editingRuleId ? 'Save' : 'Create' }}</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -175,7 +198,7 @@ import { ref, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
 import { useProjectStore } from '@/stores/project'
 import { listAPIs, createAPI, deleteAPI, importOpenAPI } from '@/api/apis'
-import { listRules, deleteRule } from '@/api/mock_rules'
+import { listRules, createRule, updateRule, deleteRule } from '@/api/mock_rules'
 import { listCases, createCase, deleteCase, getCase, updateCase } from '@/api/test_cases'
 import { listRuns, createRun, startRun, cancelRun, streamRun, getResults } from '@/api/test_runs'
 import type { TestResult } from '@/types/test_run'
@@ -211,6 +234,8 @@ const showEditCase = ref(false); const savingCase = ref(false)
 const editCaseForm = ref({ id: '', name: '', expected_status: 200 })
 const showResults = ref(false); const results = ref<TestResult[]>([])
 const selectedRunName = ref('')
+const showRuleDialog = ref(false); const savingRule = ref(false); const editingRuleId = ref('')
+const ruleForm = ref({ name: '', match_json: '', response_status: 200, response_body_json: '', priority: 0, delay_ms: 0 })
 
 onMounted(async () => {
   loading.value = true
@@ -229,6 +254,19 @@ async function handleDeleteAPI(row: API) { try { await deleteAPI(pid, row.id); a
 async function handleImport(file: any) { importing.value = true; try { const r = new FileReader(); r.onload = async (e) => { await importOpenAPI(pid, e.target?.result as string); apis.value = await listAPIs(pid); importing.value = false }; r.readAsText(file.raw) } catch { importing.value = false } }
 async function fetchRules() { if (selectedApiId.value) rules.value = await listRules(selectedApiId.value) }
 async function handleDeleteRule(row: MockRule) { await deleteRule(row.id); rules.value = rules.value.filter(r => r.id !== row.id) }
+function openCreateRule() { editingRuleId.value = ''; ruleForm.value = { name: '', match_json: '', response_status: 200, response_body_json: '', priority: 0, delay_ms: 0 }; showRuleDialog.value = true }
+function openEditRule(row: MockRule) { editingRuleId.value = row.id; ruleForm.value = { name: row.name, match_json: JSON.stringify(row.match_json), response_status: row.response_status, response_body_json: typeof row.response_body_json === 'string' ? row.response_body_json as string : JSON.stringify(row.response_body_json), priority: row.priority, delay_ms: row.delay_ms }; showRuleDialog.value = true }
+async function handleSaveRule() {
+  savingRule.value = true
+  try {
+    let matchJSON: unknown; try { matchJSON = JSON.parse(ruleForm.value.match_json) } catch { matchJSON = {} }
+    const body: Record<string, unknown> = { name: ruleForm.value.name, match_json: matchJSON, response_status: ruleForm.value.response_status, priority: ruleForm.value.priority, delay_ms: ruleForm.value.delay_ms }
+    if (ruleForm.value.response_body_json) { try { body.response_body_json = JSON.parse(ruleForm.value.response_body_json) } catch { body.response_body_json = ruleForm.value.response_body_json } }
+    if (editingRuleId.value) { await updateRule(editingRuleId.value, body) } else { body.api_id = selectedApiId.value; await createRule(body as any) }
+    showRuleDialog.value = false
+    await fetchRules()
+  } finally { savingRule.value = false }
+}
 
 // Test Cases
 async function handleCreateCase() { creatingCase.value = true; try { cases.value.push(await createCase(pid, caseForm.value)); showCreateCase.value = false; caseForm.value = { name: '', method: 'GET', path: '', expected_status: 200 } } finally { creatingCase.value = false } }
